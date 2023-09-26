@@ -1,1 +1,1 @@
-与手环通信要求两者打包的签名一致具体请看 [小米的开发文档](https://iot.mi.com/vela/quickapp/zh/content/features/network/interconnect.html)
+与手环通信要求两者打包的签名一致具体请看 [小米的开发文档](https://iot.mi.com/vela/quickapp/zh/content/features/network/interconnect.html) 和 一篇掘金大佬的 [签名教程](https://juejin.cn/post/7111910435074342926)
