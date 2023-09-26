@@ -14,6 +14,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
+import androidx.activity.OnBackPressedDispatcher
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -92,6 +94,7 @@ import com.nareshchocha.filepickerlibrary.utilities.appConst.Const
 import com.permissionx.guolindev.PermissionX
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -110,6 +113,7 @@ class MainActivity : AppCompatActivity() {
     private val uri: MutableStateFlow<Uri> = MutableStateFlow(Uri.EMPTY)
     private lateinit var bluetoothManager: BluetoothManager
     private lateinit var bluetoothAdapter: BluetoothAdapter
+    private var countDown = 0L
 
     private val pickFileLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -136,7 +140,7 @@ class MainActivity : AppCompatActivity() {
         initBlue()
 
         lifecycleScope.launch {
-            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED){
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 mainViewModel.restartFlow.collect {
                     if (it) {
                         restart()
@@ -148,6 +152,12 @@ class MainActivity : AppCompatActivity() {
         setContent {
             BandReaderTheme(darkTheme = true) {
                 navController = rememberNavController()
+                (navController as NavHostController).setLifecycleOwner(this@MainActivity)
+                val onBackPressedDispatcher = OnBackPressedDispatcher()
+                onBackPressedDispatcher.addCallback(owner = this@MainActivity, enabled = true){
+                    Toast.makeText(this@MainActivity, "navhost back", Toast.LENGTH_SHORT).show()
+                }
+                (navController as NavHostController).setOnBackPressedDispatcher(onBackPressedDispatcher)
                 // A surface container using the 'background' color from the theme
                 Surface(
                     modifier = Modifier
@@ -255,7 +265,7 @@ class MainActivity : AppCompatActivity() {
                                     ).show()
                                     if (mainViewModel.grantedErrFlow.value) {
                                         restart()
-                                    }else{
+                                    } else {
                                         lifecycleScope.launch {
                                             mainViewModel.getConnectedDevice()
                                             delay(1000)
@@ -289,13 +299,35 @@ class MainActivity : AppCompatActivity() {
                 }
             }
     }
-    fun restart(){
+
+    fun restart() {
         Handler(Looper.getMainLooper()).postDelayed({
             val launchIntent =
                 packageManager.getLaunchIntentForPackage(application.packageName)
             launchIntent!!.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             startActivity(launchIntent)
         }, 1000)
+    }
+
+    override fun onBackPressed() {
+//        super.onBackPressed()
+        if (navController.currentBackStackEntry?.destination?.route.equals("home")){
+            if (countDown !== 0L){
+                android.os.Process.killProcess(android.os.Process.myPid())
+                System.exit(0)
+            }else{
+                Toast.makeText(this@MainActivity, "再次返回退出", Toast.LENGTH_SHORT).show()
+                countDown = 2000L
+                lifecycleScope.launch {
+                    delay(2000)
+                    countDown = 0
+                }
+            }
+        }else{
+            navController.popBackStack()
+
+        }
+
     }
 
     @OptIn(ExperimentalFoundationApi::class)
@@ -527,7 +559,9 @@ class MainActivity : AppCompatActivity() {
                         Text(
                             text = syncState.value.str,
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.width(Dp((14*5).sp.value)).padding(bottom = 3.dp)
+                            modifier = Modifier
+                                .width(Dp((14 * 5).sp.value))
+                                .padding(bottom = 3.dp)
                         )
                     },
                 )
