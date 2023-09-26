@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.bandReader.data.AppDatabase
@@ -64,9 +65,10 @@ class MainViewModel @Inject constructor(@ApplicationContext private val appConte
     private val granted = MutableStateFlow("")
     val grantedErrFlow = MutableStateFlow(false)
     val syncFlow = MutableStateFlow(Pair(0, 0))
-    val receiveFlow = MutableStateFlow("")
+    val receiveFlow = MutableStateFlow("receiveFlow")
     val restartFlow = MutableStateFlow(false)
     private val bandBooksFlow = MutableStateFlow<List<Book>>(emptyList())
+    val currentBookFlow = MutableStateFlow<Book?>(null)
     var notInstall = false
 
     fun getChapters(bookId: Int) = viewModelScope.launch {
@@ -162,6 +164,9 @@ class MainViewModel @Inject constructor(@ApplicationContext private val appConte
                 curNode = it[0]
                 registerMessageListener()
                 bandConnected.value = true
+                viewModelScope.launch(Dispatchers.IO){
+                    isBandAppInstalled()
+                }
             } else {
                 bandConnected.value = false
             }
@@ -188,29 +193,35 @@ class MainViewModel @Inject constructor(@ApplicationContext private val appConte
 
     suspend fun isBandAppInstalled(): Boolean {
         val future = CompletableFuture<Boolean>()
-        curNode?.let { node ->
-            nodeApi?.isWearAppInstalled(node.id)?.addOnSuccessListener {
-                bandAppInstalled.value = it
-                if (it) {
-                    syncStatus.value = SyncStatus.SyncDef
-                    if (notInstall) {
-                        restartFlow.value = true
+        if (checkPermissionGranted()){
+            curNode?.let { node ->
+                nodeApi?.isWearAppInstalled(node.id)?.addOnSuccessListener {
+                    bandAppInstalled.value = it
+                    if (it) {
+                        if (notInstall) {
+                            restartFlow.value = true
+                        }
+                        future.complete(true)
+                    } else {
+                        future.complete(false)
+                        syncStatus.value = SyncStatus.SyncNoApp
                     }
-                    future.complete(true)
-                } else {
-                    future.complete(false)
+                }?.addOnFailureListener {
+                    receiveFlow.value = "isBandAppInstalled err ${it.message}"
+                    bandAppInstalled.value = false
                     syncStatus.value = SyncStatus.SyncNoApp
+                    future.complete(false)
                 }
-            }?.addOnFailureListener {
-                bandAppInstalled.value = false
-                syncStatus.value = SyncStatus.SyncNoApp
-                future.complete(false)
             }
+        }else{
+            future.complete(false)
         }
+
         return future.await()
     }
 
-    private fun checkPermissionGranted() {
+    private suspend fun checkPermissionGranted():Boolean {
+        val future = CompletableFuture<Boolean>()
         curNode?.let { node ->
             val permissions = arrayOf<Permission>(Permission.DEVICE_MANAGER, Permission.NOTIFY)
             authApi?.checkPermissions(node.id, permissions)?.addOnSuccessListener { it ->
@@ -231,17 +242,27 @@ class MainViewModel @Inject constructor(@ApplicationContext private val appConte
                             }
                             granted.value = "granted permission is $permissionGrantedList"
                             hasGranted = true
+                            future.complete(true)
                         }?.addOnFailureListener {
                             granted.value = "request permission failed:${it.message}"
+                            future.complete(false)
                         }
                     }
+                }else{
+                    hasGranted = true
+                    future.complete(true)
                 }
             }?.addOnFailureListener {
                 Log.i("TAG", "check permissions failed:${it.message}")
                 granted.value = "check permissions failed:${it.message}"
+                receiveFlow.value = "check permissions failed:${it.message}"
                 grantedErrFlow.value = true
+                future.complete(false)
             }
+        }?:run{
+            future.complete(false)
         }
+        return future.await()
     }
 
     fun reqBookInfo() = viewModelScope.launch(Dispatchers.IO) {
@@ -311,19 +332,21 @@ class MainViewModel @Inject constructor(@ApplicationContext private val appConte
     }
 
     fun syncToBand(bookId: Int) = viewModelScope.launch(Dispatchers.IO) {
-        if (isBandAppInstalled()) {
+        if (hasGranted) {
             isSyncing.value = true
             syncStatus.value = SyncStatus.Syncing
-            messageApi?.sendMessage(curNode!!.id, "start sync".toByteArray())
             val book = appDatabase.bookDao().getBookById(bookId)
+            receiveFlow.value = "syncToBand"
 
             book?.let {
+                receiveFlow.value = "syncToBand $book"
                 appDatabase.bookDao().update(book.copy(synced = true))
                 val msg = Json.encodeToString(BandMessage.AddBook(book))
                 messageApi?.sendMessage(
                     curNode!!.id, msg.toByteArray()
                 )?.addOnSuccessListener {
                     var count = 0
+                    receiveFlow.value = "syncToBand book added"
                     viewModelScope.launch(Dispatchers.IO) {
                         while (true) {
                             count = syncFlow.value.first
@@ -340,6 +363,8 @@ class MainViewModel @Inject constructor(@ApplicationContext private val appConte
                     }
 
                     viewModelScope.launch(Dispatchers.IO) {
+                        receiveFlow.value = "send chapters ${appDatabase.chapterDao().countUnSynced(bookId)}"
+
                         appDatabase.chapterDao().getUnSyncChapters(bookId).map { chapter ->
                             val future = CompletableFuture<Boolean>()
                             val chapterMsg =
@@ -360,7 +385,7 @@ class MainViewModel @Inject constructor(@ApplicationContext private val appConte
                                     syncStatus.value = SyncStatus.SyncFail
                                 }
                             future.await()
-                            delay(100)
+                            delay(200)
                         }
                     }
                 }?.addOnFailureListener {

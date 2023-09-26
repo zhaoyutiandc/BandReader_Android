@@ -88,6 +88,7 @@ import com.example.bandReader.data.Chapter
 import com.example.bandReader.data.SyncStatus
 import com.example.bandReader.ui.composable.Title
 import com.example.bandReader.ui.theme.BandReaderTheme
+import com.example.bandReader.ui.theme.BtnColor
 import com.nareshchocha.filepickerlibrary.models.DocumentFilePickerConfig
 import com.nareshchocha.filepickerlibrary.ui.FilePicker
 import com.nareshchocha.filepickerlibrary.utilities.appConst.Const
@@ -166,17 +167,20 @@ class MainActivity : AppCompatActivity() {
                         .systemBarsPadding(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    var currentBook: Book = remember { Book(-1, "", -1, 1) }
                     val context = LocalContext.current
                     val uriState = uri.collectAsState(initial = Uri.EMPTY)
+                    val receiveState = mainViewModel.receiveFlow.collectAsState()
                     Column {
+                        if (false){
+                            Text(text = receiveState.value, modifier = Modifier.height(300.dp))
+                        }
                         NavHost(
                             navController = navController as NavHostController,
                             startDestination = "home"
                         ) {
                             composable("home") {
                                 Home(mainViewModel.books, toDetail = { book ->
-                                    currentBook = book
+                                    mainViewModel.currentBookFlow.value = book
                                     navController.navigate("detail")
                                     mainViewModel.reqBookInfo()
                                     mainViewModel.getChapters(book.id)
@@ -210,7 +214,6 @@ class MainActivity : AppCompatActivity() {
                             }
                             composable("detail") {
                                 DetailScreen(
-                                    currentBook,
                                     mainViewModel.chapters,
                                 )
                             }
@@ -392,6 +395,7 @@ class MainActivity : AppCompatActivity() {
                     ExtendedFloatingActionButton(
                         modifier = Modifier.height(40.dp),
                         onClick = { pickFile() },
+                        containerColor = BtnColor,
                         icon = { Icon(Icons.Filled.Add, "Localized Description") },
                         text = { Text(text = "导入文件") },
                     )
@@ -511,12 +515,11 @@ class MainActivity : AppCompatActivity() {
 
     @Composable
     fun DetailScreen(
-        currentBook: Book = Book(-1, "", -1, 1),
         chapters: Flow<List<Chapter>>,
     ) {
         val chaptersState = chapters.collectAsState(initial = null)
         val syncState = mainViewModel.syncStatus.collectAsState(initial = SyncStatus.SyncDef)
-
+        val currentBookState = mainViewModel.currentBookFlow.collectAsState()
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -542,12 +545,13 @@ class MainActivity : AppCompatActivity() {
             }
             val syncCount by mainViewModel.syncFlow.collectAsState()
             Row(verticalAlignment = Alignment.Top) {
-                Title(currentBook.name, subStr = "${syncCount.first}/${syncCount.second}")
+                Title(currentBookState.value!!.name, subStr = "${syncCount.first}/${syncCount.second}")
                 Spacer(modifier = Modifier.weight(1f))
                 // button with icon
                 ExtendedFloatingActionButton(
                     modifier = Modifier.height(40.dp),
-                    onClick = { mainViewModel.syncToBand(currentBook.id) },
+                    containerColor = BtnColor,
+                    onClick = { mainViewModel.syncToBand(currentBookState.value!!.id) },
                     icon = {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
@@ -560,7 +564,6 @@ class MainActivity : AppCompatActivity() {
                             text = syncState.value.str,
                             textAlign = TextAlign.Center,
                             modifier = Modifier
-                                .width(Dp((14 * 5).sp.value))
                                 .padding(bottom = 3.dp)
                         )
                     },
