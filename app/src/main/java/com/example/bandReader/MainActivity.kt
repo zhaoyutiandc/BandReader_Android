@@ -11,8 +11,10 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.OnBackPressedDispatcher
 import androidx.activity.addCallback
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FabPosition
@@ -66,10 +69,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
-import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -89,13 +90,10 @@ import com.example.bandReader.data.SyncStatus
 import com.example.bandReader.ui.composable.Title
 import com.example.bandReader.ui.theme.BandReaderTheme
 import com.example.bandReader.ui.theme.BtnColor
-import com.nareshchocha.filepickerlibrary.models.DocumentFilePickerConfig
-import com.nareshchocha.filepickerlibrary.ui.FilePicker
-import com.nareshchocha.filepickerlibrary.utilities.appConst.Const
+import com.example.bandReader.ui.theme.ItemColor
+import com.example.bandReader.util.FileUtils
 import com.permissionx.guolindev.PermissionX
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -123,8 +121,9 @@ class MainActivity : AppCompatActivity() {
             if (result.data?.data != null) {
                 result.data?.data?.let {
                     uri.value = it
-                    filePath.value =
-                        result.data!!.getStringExtra(Const.BundleExtras.FILE_PATH).toString()
+                    val path =
+                        FileUtils.getRealPath(this@MainActivity, it) ?: "无路径"
+                    filePath.value = path
                     if (!filePath.value.endsWith(".txt")) {
                         Toast.makeText(this@MainActivity, "不支持的文件格式", Toast.LENGTH_SHORT)
                             .show()
@@ -155,10 +154,12 @@ class MainActivity : AppCompatActivity() {
                 navController = rememberNavController()
                 (navController as NavHostController).setLifecycleOwner(this@MainActivity)
                 val onBackPressedDispatcher = OnBackPressedDispatcher()
-                onBackPressedDispatcher.addCallback(owner = this@MainActivity, enabled = true){
+                onBackPressedDispatcher.addCallback(owner = this@MainActivity, enabled = true) {
                     Toast.makeText(this@MainActivity, "navhost back", Toast.LENGTH_SHORT).show()
                 }
-                (navController as NavHostController).setOnBackPressedDispatcher(onBackPressedDispatcher)
+                (navController as NavHostController).setOnBackPressedDispatcher(
+                    onBackPressedDispatcher
+                )
                 // A surface container using the 'background' color from the theme
                 Surface(
                     modifier = Modifier
@@ -171,7 +172,7 @@ class MainActivity : AppCompatActivity() {
                     val uriState = uri.collectAsState(initial = Uri.EMPTY)
                     val receiveState = mainViewModel.receiveFlow.collectAsState()
                     Column {
-                        if (false){
+                        if (false) {
                             Text(text = receiveState.value, modifier = Modifier.height(300.dp))
                         }
                         NavHost(
@@ -185,16 +186,25 @@ class MainActivity : AppCompatActivity() {
                                     mainViewModel.reqBookInfo()
                                     mainViewModel.getChapters(book.id)
                                 }, pickFile = {
-                                    pickFileLauncher.launch(
-                                        FilePicker.Builder(context)
-                                            .pickDocumentFileBuild(
-                                                DocumentFilePickerConfig(
-                                                    allowMultiple = true,
-                                                    //text
-                                                    mMimeTypes = listOf("application/pdf", "*/*"),
-                                                ),
-                                            ),
-                                    )
+                                    PermissionX.init(this@MainActivity as FragmentActivity)
+                                        .permissions(
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                                                listOf(
+                                                    Manifest.permission.READ_MEDIA_VIDEO,
+                                                    Manifest.permission.READ_MEDIA_AUDIO,
+                                                    Manifest.permission.READ_MEDIA_IMAGES,
+                                                )
+                                            else
+                                                listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+                                        )
+                                        .request { allGranted, _, deniedList ->
+                                            if (allGranted) {
+                                                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+                                                intent.type = "*/*"
+                                                pickFileLauncher.launch(intent)
+                                            }
+                                        }
+
                                 }, importBook = { input ->
                                     input?.let {
                                         if (input.isBlank()) {
@@ -314,11 +324,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onBackPressed() {
 //        super.onBackPressed()
-        if (navController.currentBackStackEntry?.destination?.route.equals("home")){
-            if (countDown !== 0L){
+        if (navController.currentBackStackEntry?.destination?.route.equals("home")) {
+            if (countDown !== 0L) {
                 android.os.Process.killProcess(android.os.Process.myPid())
                 System.exit(0)
-            }else{
+            } else {
                 Toast.makeText(this@MainActivity, "再次返回退出", Toast.LENGTH_SHORT).show()
                 countDown = 2000L
                 lifecycleScope.launch {
@@ -326,7 +336,7 @@ class MainActivity : AppCompatActivity() {
                     countDown = 0
                 }
             }
-        }else{
+        } else {
             navController.popBackStack()
 
         }
@@ -454,7 +464,10 @@ class MainActivity : AppCompatActivity() {
                                         delDialogState = true
                                         curBook = book
                                     }
-                                )
+                                ),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = ItemColor,
+                                ),
                             ) {
                                 Row(
                                     //垂直居中
@@ -503,7 +516,7 @@ class MainActivity : AppCompatActivity() {
                 dialogTitle = "log",
                 dialogText = logFlowState.value.toString(),
                 onConfirmation = {
-                    application.clearErrLog()
+//                    application.clearErrLog()
                     logDialog.value = false
                 },
                 onDismissRequest = {
@@ -545,7 +558,10 @@ class MainActivity : AppCompatActivity() {
             }
             val syncCount by mainViewModel.syncFlow.collectAsState()
             Row(verticalAlignment = Alignment.Top) {
-                Title(currentBookState.value!!.name, subStr = "${syncCount.first}/${syncCount.second}")
+                Title(
+                    currentBookState.value!!.name,
+                    subStr = "${syncCount.first}/${syncCount.second}"
+                )
                 Spacer(modifier = Modifier.weight(1f))
                 // button with icon
                 ExtendedFloatingActionButton(
@@ -592,7 +608,11 @@ class MainActivity : AppCompatActivity() {
                         Card(modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 4.dp, 8.dp)
-                            .clickable {}) {
+                            .clickable {},
+                            colors = CardDefaults.cardColors(
+                                containerColor = ItemColor,
+                            ),
+                        ) {
                             Row(
                                 //垂直居中
                                 verticalAlignment = Alignment.CenterVertically

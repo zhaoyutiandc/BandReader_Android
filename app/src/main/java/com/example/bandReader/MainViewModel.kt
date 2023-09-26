@@ -135,10 +135,6 @@ class MainViewModel @Inject constructor(@ApplicationContext private val appConte
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
-            books = appDatabase.bookDao().getAllFlow().stateIn(this) as MutableStateFlow<List<Book>>
-//            books.value = appDatabase.bookDao().getAll()
-        }
-        viewModelScope.launch(Dispatchers.IO) {
             delay(2000)
             if (isBandAppInstalled()) {
                 withContext(Dispatchers.Main) {
@@ -276,12 +272,16 @@ class MainViewModel @Inject constructor(@ApplicationContext private val appConte
     }
 
     private fun registerMessageListener() {
+        receiveFlow.value = "start registerMessageListener"
         if (hasListener) return
         val messageListener = OnMessageReceivedListener { _, message ->
             val raw = message.decodeToString()
+            receiveFlow.value = "registerMessageListener message $raw"
+            val type =
+                Json.parseToJsonElement(raw).jsonObject["type"]!!.jsonPrimitive.content
+            receiveFlow.value = "registerMessageListener type $type"
 
-            when (val type =
-                Json.parseToJsonElement(raw).jsonObject["type"]!!.jsonPrimitive.content) {
+            when (type) {
                 "book_info" -> {
                     val content =
                         Json.parseToJsonElement(raw).jsonObject["content"]!!.jsonArray.map {
@@ -385,7 +385,7 @@ class MainViewModel @Inject constructor(@ApplicationContext private val appConte
                                     syncStatus.value = SyncStatus.SyncFail
                                 }
                             future.await()
-                            delay(200)
+                            delay(140)
                         }
                     }
                 }?.addOnFailureListener {

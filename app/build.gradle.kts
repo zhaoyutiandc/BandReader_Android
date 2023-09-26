@@ -12,10 +12,10 @@ android {
 
     defaultConfig {
         applicationId = "com.example.bandReader"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 33
         versionCode = 1
-        versionName = "1.0.1"
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -53,6 +53,7 @@ android {
 }
 
 dependencies {
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("com.guolindev.permissionx:permissionx:1.7.1")
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
@@ -91,7 +92,6 @@ dependencies {
     ksp("com.google.dagger:hilt-android-compiler:2.48")
     val nav_version = "2.7.3"
     implementation("androidx.navigation:navigation-compose:$nav_version")
-    implementation("com.github.ChochaNaresh:FilePicker:0.1.8")
     val lottieVersion = "6.1.0"
     implementation("com.airbnb.android:lottie-compose:$lottieVersion")
 }

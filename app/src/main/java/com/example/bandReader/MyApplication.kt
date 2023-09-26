@@ -29,22 +29,24 @@ val KEY_ERR = stringPreferencesKey("key_err")
 
 @HiltAndroidApp
 class MyApplication :Application(), Thread.UncaughtExceptionHandler {
-    var err = MutableStateFlow("111")
-    val applicationScope = CoroutineScope(Dispatchers.Main.immediate)
+    private val applicationScope = CoroutineScope(Dispatchers.Main.immediate)
     override fun onCreate() {
         super.onCreate()
         Log.e("TAG", "application onCreate: ", )
-        val exampleCounterFlow: Flow<String> = this@MyApplication.dataStore.data
-            .map { preferences ->
-                // No type safety.
-                preferences[KEY_ERR] ?: ""
-            }
+
         // collect the flow in a CoroutineScope
         applicationScope.launch {
-            exampleCounterFlow.collect { value ->
+            this@MyApplication.dataStore.data
+                .map { preferences ->
+                    // No type safety.
+                    preferences[KEY_ERR] ?: ""
+                }.collect { value ->
                 // Update the UI.
                 if (value != "") {
                     logFlow.value = value
+                    withContext(Dispatchers.Main){
+                        Toast.makeText(this@MyApplication, "异常退出\n$value", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
@@ -67,10 +69,10 @@ class MyApplication :Application(), Thread.UncaughtExceptionHandler {
             this@MyApplication.dataStore.edit { settings ->
                 settings[KEY_ERR] = throwable.stackTraceToString()
             }
-            Toast.makeText(this@MyApplication,  throwable.toString(), Toast.LENGTH_LONG).show()
+            withContext(Dispatchers.Main){
+                Toast.makeText(this@MyApplication,  throwable.toString(), Toast.LENGTH_LONG).show()
+            }
         }
-        err.value = throwable.toString()
-
         // 退出应用程序
         android.os.Process.killProcess(android.os.Process.myPid())
         System.exit(0)
