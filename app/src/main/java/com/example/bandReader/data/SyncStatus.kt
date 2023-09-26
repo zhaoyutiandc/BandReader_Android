@@ -1,0 +1,11 @@
+package com.example.bandReader.data
+
+sealed class SyncStatus(
+    var str: String = "同步手环"
+) {
+    data object SyncNoConn : SyncStatus("未连接")
+    data object SyncNoApp : SyncStatus("APP未安装")
+    data object Syncing : SyncStatus("同步中")
+    data object SyncDef : SyncStatus("同步手环")
+    data object SyncFail : SyncStatus("同步失败")
+}
