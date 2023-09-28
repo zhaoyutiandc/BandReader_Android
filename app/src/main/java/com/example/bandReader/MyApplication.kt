@@ -46,7 +46,12 @@ class MyApplication :Application(), Thread.UncaughtExceptionHandler {
                     logFlow.value = value
                     withContext(Dispatchers.Main){
                         Toast.makeText(this@MyApplication, "异常退出\n$value", Toast.LENGTH_SHORT).show()
+                        Log.e("TAG",value)
                     }
+                    this@MyApplication.dataStore.edit { settings ->
+                        settings.remove(KEY_ERR)
+                    }
+
                 }
             }
         }

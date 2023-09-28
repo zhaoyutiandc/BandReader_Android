@@ -153,13 +153,6 @@ class MainActivity : AppCompatActivity() {
             BandReaderTheme(darkTheme = true) {
                 navController = rememberNavController()
                 (navController as NavHostController).setLifecycleOwner(this@MainActivity)
-                val onBackPressedDispatcher = OnBackPressedDispatcher()
-                onBackPressedDispatcher.addCallback(owner = this@MainActivity, enabled = true) {
-                    Toast.makeText(this@MainActivity, "navhost back", Toast.LENGTH_SHORT).show()
-                }
-                (navController as NavHostController).setOnBackPressedDispatcher(
-                    onBackPressedDispatcher
-                )
                 // A surface container using the 'background' color from the theme
                 Surface(
                     modifier = Modifier
@@ -234,6 +227,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onDestroy() {
+        mainViewModel.curNode?.let {
+            mainViewModel.messageApi?.removeListener(mainViewModel.curNode!!.id)
+                ?.addOnSuccessListener { mainViewModel.receiveFlow.value =  "listener 卸载" }
+                ?.addOnFailureListener {
+                    mainViewModel.receiveFlow.value = "removeListener fail ${it.stackTraceToString()}"
+                }
+        }
+        super.onDestroy()
+    }
+
     private fun initBlue() {
         bluetoothManager = getSystemService(BluetoothManager::class.java)
         bluetoothAdapter = bluetoothManager.adapter
@@ -280,9 +284,9 @@ class MainActivity : AppCompatActivity() {
                                         restart()
                                     } else {
                                         lifecycleScope.launch {
-                                            mainViewModel.getConnectedDevice()
                                             delay(1000)
-                                            mainViewModel.isBandAppInstalled()
+                                            val res = mainViewModel.getConnectedDevice()
+                                            mainViewModel.receiveFlow.value = "activity判断手环状态 $res"
                                         }
                                     }
                                 }
@@ -295,6 +299,7 @@ class MainActivity : AppCompatActivity() {
                                         "蓝牙正在关闭",
                                         Toast.LENGTH_SHORT
                                     ).show()
+
 
                                 }
                             }
@@ -387,18 +392,18 @@ class MainActivity : AppCompatActivity() {
                     .padding(16.dp),
             ) {
                 val bandConnectedState = mainViewModel.bandConnected.collectAsState(initial = false)
+                val bandAppInstalledState = mainViewModel.bandAppInstalledFlow.collectAsState(initial = false)
+                val hasGrantedState = mainViewModel.hasGrantedFlow.collectAsState(initial = false)
                 Row(verticalAlignment = Alignment.Top) {
                     Title(
-                        "书架",
-                        subStr =
-                        (if (bandConnectedState.value)
-                            "手环已连接"
-                        else
-                            "手环未连接")/* +
-                                (if (bandAppInstallState.value)
-                                    "\n手环app已安装"
-                                else
-                                    "\n手环app未安装")*/
+                        "书架1",
+                        subStr = when{
+                            (bandConnectedState.value && bandAppInstalledState.value) -> "手环APP已连接"
+                            (bandConnectedState.value && !bandAppInstalledState.value) -> "手环已连接APP未安装"
+                            (bandConnectedState.value && bandAppInstalledState.value && !hasGrantedState.value) -> "APP已安装但权限异常"
+                            (!bandConnectedState.value) -> "手环未连接"
+                            else -> ""
+                        }
                     )
                     Spacer(modifier = Modifier.weight(1f))
                     // button with icon
@@ -560,9 +565,10 @@ class MainActivity : AppCompatActivity() {
             Row(verticalAlignment = Alignment.Top) {
                 Title(
                     currentBookState.value!!.name,
-                    subStr = "${syncCount.first}/${syncCount.second}"
+                    subStr = "${syncCount.first}/${syncCount.second}",
+                    modifier = Modifier.weight(1f)
                 )
-                Spacer(modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.width(16.dp))
                 // button with icon
                 ExtendedFloatingActionButton(
                     modifier = Modifier.height(40.dp),

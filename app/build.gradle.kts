@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.*
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -21,6 +24,14 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments += mapOf(
+                    "room.schemaLocation" to "$projectDir/schemas",
+                    "room.incremental" to "true"
+                )
+            }
+        }
     }
 
     buildTypes {
@@ -31,13 +42,23 @@ android {
                 "proguard-rules.pro"
             )
         }
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+            this.isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug").apply {
+                keyAlias = "testalias"
+                keyPassword = "112233"
+                storeFile = file("./test.keystore")
+                storePassword = "112233"
+            }
+        }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "11"
     }
     buildFeatures {
         compose = true
@@ -81,7 +102,7 @@ dependencies {
     //noinspection LifecycleAnnotationProcessorWithJava8
     implementation("androidx.lifecycle:lifecycle-compiler")
     implementation("androidx.datastore:datastore-preferences:1.0.0")
-    val room_version = "2.5.2"
+    val room_version = "2.6.0-rc01"
     implementation("androidx.room:room-runtime:$room_version")
     annotationProcessor("androidx.room:room-compiler:$room_version")
     // To use Kotlin Symbol Processing (KSP)

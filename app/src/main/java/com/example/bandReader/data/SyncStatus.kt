@@ -8,4 +8,5 @@ sealed class SyncStatus(
     data object Syncing : SyncStatus("同步中")
     data object SyncDef : SyncStatus("同步手环")
     data object SyncFail : SyncStatus("同步失败")
+    data object SyncRe : SyncStatus("重新同步")
 }

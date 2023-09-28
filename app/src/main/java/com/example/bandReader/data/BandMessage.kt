@@ -10,7 +10,7 @@ sealed class BandMessage(
     data class AddBook(var content: Book) : BandMessage("add_book")
 
     @Serializable
-    data class AddChapter(var content: Chapter) : BandMessage("add_chapter")
+    data class AddChapter(var content: ChapterByChunk) : BandMessage("add_chapter")
 
     @Serializable
     data class BookInfo(var content: String = "") : BandMessage("book_info")

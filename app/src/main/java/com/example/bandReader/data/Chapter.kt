@@ -1,11 +1,17 @@
 package com.example.bandReader.data
 
+import android.net.Uri
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.ColumnInfo
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
+import java.net.URI
+import java.util.Base64
 
 @Entity(tableName = "chapter")
 @Serializable
@@ -26,6 +32,39 @@ data class Chapter(
     var sync: Boolean = false,
 )
 
-fun Chapter.toJsonString():String{
+@Serializable
+data class ChapterByChunk(
+    var id: Int = 0,
+    var index: Int = 0,
+    var bookId: Int = 0,
+    var name: String = "",
+    var content: String,
+    var paging: Int = 0,
+    var sync: Boolean = false,
+    var first: Boolean = true,
+    var last: Boolean = true,
+    @Transient
+    var raw:Chapter? = null
+)
+fun Chapter.toJsonString(): String {
     return Json.encodeToString(this)
+}
+
+
+fun Chapter.toChunk(): List<ChapterByChunk> {
+    val chunks = content.chunked(3000)
+    return chunks.mapIndexed { idx, chunk ->
+        ChapterByChunk(
+            id = id,
+            index = index,
+            bookId = bookId,
+            name = name,
+            content = chunk,
+            paging = paging,
+            sync = sync,
+            first = idx == 0,
+            last = idx == chunks.size - 1,
+            raw = this.copy()
+        )
+    }
 }
