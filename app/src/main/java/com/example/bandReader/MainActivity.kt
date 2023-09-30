@@ -11,34 +11,39 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.provider.DocumentsContract
+import android.util.Log
 import android.widget.Toast
-import androidx.activity.OnBackPressedDispatcher
-import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.EaseIn
+import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -55,15 +60,20 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -71,6 +81,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -89,15 +101,27 @@ import com.example.bandReader.data.Chapter
 import com.example.bandReader.data.SyncStatus
 import com.example.bandReader.ui.composable.Title
 import com.example.bandReader.ui.theme.BandReaderTheme
+import com.example.bandReader.ui.theme.Blue80
+import com.example.bandReader.ui.theme.BlueGray80
 import com.example.bandReader.ui.theme.BtnColor
+import com.example.bandReader.ui.theme.BtnGrayColor
 import com.example.bandReader.ui.theme.ItemColor
 import com.example.bandReader.util.FileUtils
 import com.permissionx.guolindev.PermissionX
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileNotFoundException
+import java.io.InputStreamReader
+import java.nio.channels.FileChannel
 
 val openDialog: MutableStateFlow<Boolean> = MutableStateFlow(false)
 val filePath: MutableStateFlow<String> = MutableStateFlow("")
@@ -108,8 +132,9 @@ val logDialog: MutableStateFlow<Boolean> = MutableStateFlow(false)
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
     val mainViewModel by viewModels<MainViewModel>()
+    var fromIntent = false
     private lateinit var navController: NavController
-    private val uri: MutableStateFlow<Uri> = MutableStateFlow(Uri.EMPTY)
+    private val uriFlow: MutableStateFlow<Uri> = MutableStateFlow(Uri.EMPTY)
     private lateinit var bluetoothManager: BluetoothManager
     private lateinit var bluetoothAdapter: BluetoothAdapter
     private var countDown = 0L
@@ -117,10 +142,10 @@ class MainActivity : AppCompatActivity() {
     private val pickFileLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             //clear list
-            uri.value = Uri.EMPTY
+            uriFlow.value = Uri.EMPTY
             if (result.data?.data != null) {
                 result.data?.data?.let {
-                    uri.value = it
+                    uriFlow.value = it
                     val path =
                         FileUtils.getRealPath(this@MainActivity, it) ?: "无路径"
                     filePath.value = path
@@ -133,11 +158,65 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    private val openDocumentLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { result ->
+        mainViewModel.receiveFlow.value = "openDocumentLauncher"
+    }
 
+    override fun onResume() {
+        super.onResume()
+        mainViewModel.receiveFlow.value = "onResume"
+        if (intent.action == Intent.ACTION_VIEW) {
+            fromIntent = true
+            onImport()
+        }
+    }
+
+    /*override fun onStart() {
+        super.onStart()
+        if (intent.action == Intent.ACTION_VIEW) {
+            onImport()
+        }
+    }*/
+
+    /*override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        mainViewModel.receiveFlow.value = "onNewIntent"
+        if (intent?.action == Intent.ACTION_VIEW) {
+            onImport()
+        }
+    }*/
+
+    fun onImport(){
+        mainViewModel.receiveFlow.value = "onImport"
+        Log.e("TAG","ACTION_VIEW")
+        // 获取 txt 文件的路径
+        uriFlow.value = intent.data ?: Uri.EMPTY
+        val uri = intent.data
+        val path = uri?.path
+        Log.e("TAG","path: $path")
+        if (path != null) {
+            filePath.value = path
+            if (!filePath.value.endsWith(".txt")) {
+                Toast.makeText(this@MainActivity, "不支持的文件格式", Toast.LENGTH_SHORT)
+                    .show()
+            } else {
+                openDialog.value = true
+            }
+        }
+    }
+
+    @SuppressLint("Recycle")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         initBlue()
+        Log.e("TAG","intent.action: ${intent.action}")
+
+        if (intent.action == Intent.ACTION_VIEW) {
+//            onImport()
+        }
 
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -162,8 +241,26 @@ class MainActivity : AppCompatActivity() {
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     val context = LocalContext.current
-                    val uriState = uri.collectAsState(initial = Uri.EMPTY)
+                    val uriState = uriFlow.collectAsState(initial = Uri.EMPTY)
                     val receiveState = mainViewModel.receiveFlow.collectAsState()
+                    val animation by remember {
+                        mutableStateOf(Pair(fadeIn(
+                            animationSpec = tween(
+                                300, easing = LinearEasing
+                            )
+                        ) + androidx.compose.animation.slideInHorizontally(
+                            animationSpec = tween(300, easing = EaseIn),
+                            //compose 屏幕宽度
+                            initialOffsetX = { fullWidth -> fullWidth }
+                        ), fadeOut(
+                            animationSpec = tween(
+                                300, easing = LinearEasing
+                            )
+                        ) + androidx.compose.animation.slideOutHorizontally(
+                            animationSpec = tween(300, easing = EaseOut),
+                            targetOffsetX = { fullWidth -> fullWidth }
+                        )))
+                    }
                     Column {
                         if (false) {
                             Text(text = receiveState.value, modifier = Modifier.height(300.dp))
@@ -174,17 +271,25 @@ class MainActivity : AppCompatActivity() {
                         ) {
                             composable("home") {
                                 Home(mainViewModel.books, toDetail = { book ->
-                                    mainViewModel.currentBookFlow.value = book
-                                    navController.navigate("detail")
-                                    mainViewModel.reqBookInfo()
-                                    mainViewModel.getChapters(book.id)
+                                    if (mainViewModel.syncStatus.value == SyncStatus.Syncing && !(mainViewModel.currentBookFlow.value!!.id == book.id)) {
+                                        Toast.makeText(
+                                            context,
+                                            "${mainViewModel.currentBookFlow.value!!.name}同步中请稍后",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } else {
+                                        mainViewModel.currentBookFlow.value = book
+                                        navController.navigate("detail")
+                                        mainViewModel.reqBookInfo()
+                                        mainViewModel.getChapters(book.id)
+                                    }
+
                                 }, pickFile = {
                                     PermissionX.init(this@MainActivity as FragmentActivity)
                                         .permissions(
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                                                 listOf(
                                                     Manifest.permission.READ_MEDIA_VIDEO,
-                                                    Manifest.permission.READ_MEDIA_AUDIO,
                                                     Manifest.permission.READ_MEDIA_IMAGES,
                                                 )
                                             else
@@ -200,6 +305,14 @@ class MainActivity : AppCompatActivity() {
 
                                 }, importBook = { input ->
                                     input?.let {
+                                        if (mainViewModel.isImporting.value) {
+                                            Toast.makeText(
+                                                context,
+                                                "正在导入中请稍后",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            return@let
+                                        }
                                         if (input.isBlank()) {
                                             Toast.makeText(
                                                 context,
@@ -208,14 +321,17 @@ class MainActivity : AppCompatActivity() {
                                             ).show()
                                             return@let
                                         }
-                                        mainViewModel.importBook(
-                                            bookName(input.trim()),
-                                            uriState.value
+                                        importBook(
+                                            bookName(input),
+                                            uriState.value,
                                         )
                                     }
                                 })
                             }
-                            composable("detail") {
+                            composable(
+                                "detail",
+                                enterTransition = { animation.first },
+                                exitTransition = { animation.second }) {
                                 DetailScreen(
                                     mainViewModel.chapters,
                                 )
@@ -230,9 +346,10 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         mainViewModel.curNode?.let {
             mainViewModel.messageApi?.removeListener(mainViewModel.curNode!!.id)
-                ?.addOnSuccessListener { mainViewModel.receiveFlow.value =  "listener 卸载" }
+                ?.addOnSuccessListener { mainViewModel.receiveFlow.value = "listener 卸载" }
                 ?.addOnFailureListener {
-                    mainViewModel.receiveFlow.value = "removeListener fail ${it.stackTraceToString()}"
+                    mainViewModel.receiveFlow.value =
+                        "removeListener fail ${it.stackTraceToString()}"
                 }
         }
         super.onDestroy()
@@ -286,7 +403,8 @@ class MainActivity : AppCompatActivity() {
                                         lifecycleScope.launch {
                                             delay(1000)
                                             val res = mainViewModel.getConnectedDevice()
-                                            mainViewModel.receiveFlow.value = "activity判断手环状态 $res"
+                                            mainViewModel.receiveFlow.value =
+                                                "activity判断手环状态 $res"
                                         }
                                     }
                                 }
@@ -319,16 +437,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun restart() {
-        Handler(Looper.getMainLooper()).postDelayed({
-            val launchIntent =
-                packageManager.getLaunchIntentForPackage(application.packageName)
-            launchIntent!!.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            startActivity(launchIntent)
-        }, 1000)
+        val launchIntent =
+            packageManager.getLaunchIntentForPackage(application.packageName)
+        launchIntent!!.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        startActivity(launchIntent)
     }
 
     override fun onBackPressed() {
-//        super.onBackPressed()
+        if (fromIntent) {
+            super.onBackPressed()
+            return
+        }
         if (navController.currentBackStackEntry?.destination?.route.equals("home")) {
             if (countDown !== 0L) {
                 android.os.Process.killProcess(android.os.Process.myPid())
@@ -392,12 +512,13 @@ class MainActivity : AppCompatActivity() {
                     .padding(16.dp),
             ) {
                 val bandConnectedState = mainViewModel.bandConnected.collectAsState(initial = false)
-                val bandAppInstalledState = mainViewModel.bandAppInstalledFlow.collectAsState(initial = false)
+                val bandAppInstalledState =
+                    mainViewModel.bandAppInstalledFlow.collectAsState(initial = false)
                 val hasGrantedState = mainViewModel.hasGrantedFlow.collectAsState(initial = false)
                 Row(verticalAlignment = Alignment.Top) {
                     Title(
-                        "书架1",
-                        subStr = when{
+                        "书架",
+                        subStr = when {
                             (bandConnectedState.value && bandAppInstalledState.value) -> "手环APP已连接"
                             (bandConnectedState.value && !bandAppInstalledState.value) -> "手环已连接APP未安装"
                             (bandConnectedState.value && bandAppInstalledState.value && !hasGrantedState.value) -> "APP已安装但权限异常"
@@ -415,7 +536,7 @@ class MainActivity : AppCompatActivity() {
                         text = { Text(text = "导入文件") },
                     )
                 }
-                Spacer(modifier = Modifier.padding(16.dp))
+                Spacer(modifier = Modifier.padding(12.dp))
                 ElevatedCard(
                     //flex1
                     //width 100%
@@ -444,7 +565,7 @@ class MainActivity : AppCompatActivity() {
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(scrollState)
-                            .padding(8.dp)
+                            .padding(12.dp, 14.dp)
                     ) {
                         if (delDialogState) {
                             AlertDialogExample(
@@ -460,40 +581,40 @@ class MainActivity : AppCompatActivity() {
                         }
 
                         bookState.value.forEach { book ->
-                            Card(modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp)
-                                .combinedClickable(
-                                    onClick = { toDetail(book) },
-                                    onLongClick = {
-                                        delDialogState = true
-                                        curBook = book
-                                    }
-                                ),
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = { toDetail(book) },
+                                        onLongClick = {
+                                            delDialogState = true
+                                            curBook = book
+                                        }
+                                    ),
                                 colors = CardDefaults.cardColors(
                                     containerColor = ItemColor,
                                 ),
                             ) {
                                 Row(
                                     //垂直居中
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalAlignment = Alignment.Top,
+                                    modifier = Modifier.padding(12.dp, 14.dp)
                                 ) {
                                     Text(
                                         modifier = Modifier
-                                            .padding(12.dp, 16.dp)
                                             .weight(1f),
                                         text = book.name,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 4.em,
-                                        maxLines = 1,
+                                        maxLines = 2,
                                         //超出省略号
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
-                                    Spacer(modifier = Modifier.padding(16.dp))
+                                    Spacer(modifier = Modifier.padding(8.dp))
                                     Text("章节数: ${book.chapters}")
-                                    Spacer(modifier = Modifier.padding(12.dp))
                                 }
                             }
+                            Spacer(modifier = Modifier.padding(8.dp))
                         }
                     }
                 }
@@ -506,11 +627,13 @@ class MainActivity : AppCompatActivity() {
         val filePathState = filePath.collectAsState(initial = "")
         val logFlowState = logFlow.collectAsState(initial = "")
         val application = LocalContext.current.applicationContext as MyApplication
+        val isImportingState = mainViewModel.isImporting.collectAsState(initial = false)
         if (openDialogState.value) {
             AlertDialogExample(
                 dialogTitle = "确认书名",
                 dialogText = bookName(filePathState.value),
                 onConfirmation = importBook,
+                confirmText = if (isImportingState.value) "导入中" else "导入",
                 onDismissRequest = {
                     openDialog.value = false
                 }
@@ -535,9 +658,10 @@ class MainActivity : AppCompatActivity() {
     fun DetailScreen(
         chapters: Flow<List<Chapter>>,
     ) {
-        val chaptersState = chapters.collectAsState(initial = null)
+        val chaptersState = chapters.collectAsState(initial = emptyList())
         val syncState = mainViewModel.syncStatus.collectAsState(initial = SyncStatus.SyncDef)
         val currentBookState = mainViewModel.currentBookFlow.collectAsState()
+        val chapterLoadingState = mainViewModel.chapterLoading.collectAsState()
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -568,7 +692,7 @@ class MainActivity : AppCompatActivity() {
                     subStr = "${syncCount.first}/${syncCount.second}",
                     modifier = Modifier.weight(1f)
                 )
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(12.dp))
                 // button with icon
                 ExtendedFloatingActionButton(
                     modifier = Modifier.height(40.dp),
@@ -591,7 +715,47 @@ class MainActivity : AppCompatActivity() {
                     },
                 )
             }
-            Spacer(modifier = Modifier.padding(16.dp))
+            Spacer(modifier = Modifier.padding(12.dp))
+
+            val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.lottie_load))
+            //scroll state
+            val listState = rememberLazyListState()
+            // Remember a CoroutineScope to be able to launch
+            val coroutineScope = rememberCoroutineScope()
+            val rendered by remember {
+                derivedStateOf {
+                    listState.firstVisibleItemIndex > 1
+                }
+            }
+
+            SideEffect {
+                coroutineScope.launch {
+                    delay(1000)
+                    mainViewModel.syncFlow.collectLatest {
+                        mainViewModel.receiveFlow.value = "mainViewModel.syncFlow.collectLatest $it"
+                        if (it.first < 15) {
+                            listState.scrollToItem(1)
+                            mainViewModel.chapterLoading.value = false
+                        } else if ((15..it.second - 9).contains(it.first))
+                            listState.scrollToItem(it.first - 5)
+                        else if (it.second - it.first < 10) {
+                            listState.scrollToItem(it.second + 1)
+                        }
+                    }
+                }
+                coroutineScope.launch {
+                    //监听listState的滚动
+                    while (true) {
+                        delay(300L)
+                        if (listState.firstVisibleItemIndex > 0) {
+                            delay((500 + syncCount.second).toLong())
+                            mainViewModel.chapterLoading.value = false
+                            break
+                        }
+                    }
+                }
+            }
+
             ElevatedCard(
                 //flex1
                 //width 100%
@@ -600,50 +764,231 @@ class MainActivity : AppCompatActivity() {
                     .fillMaxSize()
                 //border card
             ) {
-                //scroll state
-                rememberScrollState()
-                //list book
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(8.dp)
 
-                ) {
-                    items(chaptersState.value?.size ?: 0) { index ->
-                        val chapter = chaptersState.value?.get(index)
-                        Card(modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp, 8.dp)
-                            .clickable {},
-                            colors = CardDefaults.cardColors(
-                                containerColor = ItemColor,
-                            ),
-                        ) {
-                            Row(
-                                //垂直居中
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    modifier = Modifier
-                                        .padding(16.dp, 8.dp)
-                                        .weight(1f),
-                                    text = chapter?.name ?: "无名称",
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    //超出省略号
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.padding(16.dp))
-                                Text(if (chapter?.sync == true) "已同步" else "未同步")
-                                Spacer(modifier = Modifier.padding(8.dp))
+                // compose animation state for boolean
+                AnimatedVisibility(chapterLoadingState.value, enter = fadeIn(), exit = fadeOut()) {
+                    LottieAnimation(
+                        composition,
+                        modifier = Modifier.fillMaxSize(),
+                        iterations = LottieConstants.IterateForever,
+                    )
+                }
+
+
+                if (chaptersState.value.isNotEmpty()) {
+                    //list book
+                    AnimatedVisibility(visible = rendered && syncState.value !== SyncStatus.Syncing) {
+                        //回到顶部
+                        Text(
+                            text = "回到顶部",
+                            color = BlueGray80,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(4.dp)
+                                /*.drawWithContent {
+                                    drawLine(
+                                        color = Color.Red,
+                                        start = Offset(0f, 0f),
+                                        end = Offset(0f, size.height),
+                                        strokeWidth = 1f
+                                    )
+                                }*/
+                                .clickable {
+                                    coroutineScope.launch {
+                                        listState.scrollToItem(1)
+                                    }
+                                },
+                        )
+                    }
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 8.dp, vertical = 0.dp)
+
+                    ) {
+                        item {
+                            SideEffect {
+                                coroutineScope.launch {
+                                    listState.scrollToItem(1)
+                                    mainViewModel.receiveFlow.value = "scroll to 1"
+                                }
                             }
+                            Spacer(modifier = Modifier.height(if (chaptersState.value.isEmpty()) 8.dp else 1.dp))
+                        }
+                        items(chaptersState.value?.size ?: 0) { index ->
+                            val chapter = chaptersState.value?.get(index)
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, 12.dp)
+                                    .clickable {},
+                                colors = CardDefaults.cardColors(
+                                    containerColor = ItemColor,
+                                ),
+                            ) {
+                                Column(
+                                    //垂直居中
+                                    verticalArrangement = Arrangement.Top,
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp, 20.dp)
+                                    ) {
+                                        Text(
+                                            modifier = Modifier
+                                                .fillMaxWidth(),
+                                            text = chapter?.name ?: "无名称",
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 2,
+                                            //超出省略号
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                        )
+
+                                        Icon(
+                                            modifier = Modifier
+                                                .offset(x = (10).dp, y = (-14).dp)
+                                                .align(alignment = Alignment.TopEnd)
+                                                .size(18.dp),
+                                            imageVector = Icons.Outlined.CheckCircle,
+                                            tint = if (chapter?.sync == true) Blue80 else Color.Transparent,
+                                            contentDescription = ""
+                                        )
+                                    }
+
+
+                                    /*Text(
+                                        modifier = Modifier
+                                            .align(Alignment.End),
+                                        text = if (chapter?.sync == true) "已同步" else "未同步",
+                                        color = if (chapter?.sync == true) Blue80
+                                        else Color.White,
+                                    )*/
+                                }
+                            }
+                        }
+                        item {
+                            Spacer(
+                                modifier = Modifier
+                                    .height(1.dp)
+                                    .fillMaxWidth()
+                                    .background(
+                                        BtnGrayColor
+                                    )
+                            )
                         }
                     }
                 }
+
             }
             Spacer(modifier = Modifier.height(8.dp))
         }
     }
+
+    fun importBook(bookName: String, uri: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            mainViewModel.receiveFlow.value = "importBook"
+            logFlow.value = "split in"
+            if (mainViewModel.appDatabase.bookDao().getBookByName(bookName) != null) {
+                mainViewModel.receiveFlow.value = "书名重复"
+                Toast.makeText(mainViewModel.appContext, "书名重复", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            mainViewModel.isImporting.value = true
+            val book = Book(0, bookName, 0, 1, synced = false)
+            val bookId = mainViewModel.appDatabase.bookDao().insert(book)
+             book.id = bookId.toInt()
+            try {
+                val chapters =
+                    readTxtFile(book, mainViewModel.appContext, uri, mainViewModel.receiveFlow)
+                book.chapters = chapters.size
+                book.pages = chapters.last().paging
+                mainViewModel.appDatabase.bookDao().update(book)
+                mainViewModel.appDatabase.chapterDao().insertAll(chapters)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(mainViewModel.appContext, "导入成功 快去同步吧~", Toast.LENGTH_LONG)
+                        .show()
+                }
+                filePath.value = ""
+                openDialog.value = false
+                if (fromIntent) restart()
+            } catch (e: Exception) {
+                Log.i("TAG", "importBook: ${e.message}")
+            mainViewModel.appDatabase.bookDao().delete(book)
+            } finally {
+                mainViewModel.isImporting.value = false
+            }
+        }
+    }
+
+    fun readTxtFile(
+        book: Book,
+        context: Context,
+        uri: Uri = Uri.EMPTY,
+        receiveFlow: MutableStateFlow<String>
+    ): List<Chapter> {
+        receiveFlow.value = "readTxtFile"
+
+        if (uri == Uri.EMPTY) {
+            return emptyList()
+        }
+        receiveFlow.value = "readTxtFile uri:$uri"
+
+        logFlow.value = "uri:$uri"
+        val inputStream = context.contentResolver.openInputStream(uri)
+        val bufferedReader = BufferedReader(InputStreamReader(inputStream))
+
+        receiveFlow.value = "readTxtFile burrer"
+        var chapters = mutableListOf(Pair("", ""))
+        val regex = Regex(""".{0,10}第.*章.{0,30}""")
+//    logDialog.value = true
+        logFlow.value = "开始读取"
+        var counter = 0
+        var counter2 = 0
+        var temp = Pair("", "")
+        bufferedReader.let { br ->
+            while (true) {
+                val it = br.readLine() ?: break
+                counter++
+                temp = if (regex.matches(it)) {
+                    counter2++
+                    if (temp.first.isNotEmpty()) {
+                        chapters.add(temp)
+                        Pair(it, "")
+                    } else {
+                        temp.copy(first = it)
+                    }
+                } else {
+                    temp.copy(second = temp.second + it + "\n")
+                }
+            }
+//            bufferedReader!!.readLines().forEach
+        }
+        if (temp.second.isNotBlank()) {
+            chapters.add(temp)
+        }
+        logFlow.value = "读取完毕"
+        inputStream?.close()
+        chapters = chapters.filter { it.second.length > 50 }.toMutableList()
+        val titles =
+            chapters.mapIndexed { index, it -> "index:$index title:${it.first}\n" }
+                .joinToString { it }
+        showFlow.value = "共${counter}行 匹配${counter2}行 \n $titles"
+        val chapterEntity = chapters.mapIndexed { index, it ->
+            Chapter(
+                index = index,
+                bookId = book.id,
+                name = it.first,
+                content = it.second,
+                paging = (index / 50) + 1
+            )
+        }
+        return chapterEntity
+    }
+
 }
 
 @Composable

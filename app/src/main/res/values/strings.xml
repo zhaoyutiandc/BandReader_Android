@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">BandReader</string>
+    <string name="title_activity_intent">BandReader导入</string>
 </resources>

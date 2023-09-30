@@ -2,6 +2,7 @@ package com.example.bandReader.ui.composable
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,9 +17,11 @@ fun Title(str:String, subStr:String? = null, @SuppressLint("ModifierParameter") 
         Text(
             text = str,
             fontSize = 24.sp,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            maxLines=2
         )
         subStr?.let {
+            Spacer(modifier = Modifier.padding(1.dp))
             Text(
                 text = it,
                 fontSize = 16.sp,

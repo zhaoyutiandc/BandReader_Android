@@ -1,7 +1,10 @@
 package com.example.bandReader
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.os.StrictMode
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.viewModels
@@ -30,10 +33,18 @@ val KEY_ERR = stringPreferencesKey("key_err")
 @HiltAndroidApp
 class MyApplication :Application(), Thread.UncaughtExceptionHandler {
     private val applicationScope = CoroutineScope(Dispatchers.Main.immediate)
+    lateinit var  clipboardManager: ClipboardManager
     override fun onCreate() {
         super.onCreate()
         Log.e("TAG", "application onCreate: ", )
 
+        /*val strictMode = StrictMode.ThreadPolicy.Builder()
+            .detectAll()
+            .penaltyLog()
+            .build()
+        StrictMode.setThreadPolicy(strictMode)*/
+
+        clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         // collect the flow in a CoroutineScope
         applicationScope.launch {
             this@MyApplication.dataStore.data
@@ -45,9 +56,13 @@ class MyApplication :Application(), Thread.UncaughtExceptionHandler {
                 if (value != "") {
                     logFlow.value = value
                     withContext(Dispatchers.Main){
-                        Toast.makeText(this@MyApplication, "异常退出\n$value", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MyApplication, "上次异常退出已复制剪切板", Toast.LENGTH_SHORT).show()
                         Log.e("TAG",value)
                     }
+                    // 创建一个包含文本的 ClipData
+                    val clipData = ClipData.newPlainText("err", value)
+                    // 将 ClipData 写入剪贴板
+                    clipboardManager.setPrimaryClip(clipData)
                     this@MyApplication.dataStore.edit { settings ->
                         settings.remove(KEY_ERR)
                     }
