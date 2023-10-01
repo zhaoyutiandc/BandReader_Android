@@ -117,4 +117,6 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:$nav_version")
     val lottieVersion = "6.1.0"
     implementation("com.airbnb.android:lottie-compose:$lottieVersion")
+
+    implementation("com.github.albfernandez:juniversalchardet:2.4.0")
 }

@@ -29,6 +29,7 @@ import kotlinx.coroutines.withContext
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 val EXAMPLE_COUNTER = intPreferencesKey("example_counter")
 val KEY_ERR = stringPreferencesKey("key_err")
+val APP_CONFIG = stringPreferencesKey("app_config")
 
 @HiltAndroidApp
 class MyApplication :Application(), Thread.UncaughtExceptionHandler {

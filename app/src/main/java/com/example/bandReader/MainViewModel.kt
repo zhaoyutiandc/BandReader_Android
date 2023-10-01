@@ -5,8 +5,11 @@ import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.runtime.mutableStateListOf
+import androidx.datastore.dataStore
+import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.bandReader.data.AppConfig
 import com.example.bandReader.data.AppDatabase
 import com.example.bandReader.data.BandMessage
 import com.example.bandReader.data.Book
@@ -34,6 +37,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -78,6 +82,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     val chapterLoading = MutableStateFlow(false)
     private val granted = MutableStateFlow("")
     val grantedErrFlow = MutableStateFlow(false)
+    var syncFail = false
     val syncFlow = MutableStateFlow(Pair(0, 0))
     val receiveFlow = MutableStateFlow("receiveFlow")
     val restartFlow = MutableStateFlow(false)
@@ -86,6 +91,9 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     var notInstall = false
     val shareUri = MutableStateFlow(Uri.EMPTY)
     var bufferedReaderFlow = MutableStateFlow<BufferedReader?>(null)
+    var printArr = MutableStateFlow<List<String>>(emptyList<String>().toMutableList())
+    var appConfigFlow = MutableStateFlow(AppConfig(showLog = false, boost = false))
+    val avergeLengthFlow = MutableStateFlow(0)
 
     fun getChapters(bookId: Int) = viewModelScope.launch {
         chapterLoading.value = true
@@ -98,12 +106,31 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             "syncFlow.value.first == syncFlow.value.second ${syncFlow.value.first} ${syncFlow.value.second} ${syncFlow.value.first == syncFlow.value.second}"
         if (syncFlow.value.first == syncFlow.value.second) {
             syncStatus.value = SyncStatus.SyncRe
+        } else {
+            syncStatus.value = SyncStatus.SyncDef
         }
     }
 
 
-
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            appContext.dataStore.data
+                .map { preferences ->
+                    // No type safety.
+                    preferences[APP_CONFIG] ?: ""
+                }.collect { value ->
+                    if (value.contains("boost"))
+                        appConfigFlow.value = Json.decodeFromString(value)
+                }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            appConfigFlow.collectLatest {
+                receiveFlow.value = "appConfigFlow $it"
+                appContext.dataStore.edit { settings ->
+                    settings[APP_CONFIG] = Json.encodeToString(it.copy(boost = false))
+                }
+            }
+        }
         nodeApi = Wearable.getNodeApi(appContext)
         messageApi = Wearable.getMessageApi(appContext)
         authApi = Wearable.getAuthApi(appContext)
@@ -128,8 +155,34 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         })
 
         viewModelScope.launch(Dispatchers.IO) {
+            syncStatus.collectLatest {
+                if (syncFail) {
+                    receiveFlow.value = "syncFail"
+                    syncStatus.value = SyncStatus.SyncFail
+                }
+            }
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
             receiveFlow.collectLatest {
                 Log.i("TAG", "======== receiveFlow:$it")
+                //把日志放到printArr.value的第一个位置
+                printArr.value = printArr.value.toMutableList().apply {
+                    add(0, it)
+                }
+//                printArr去重
+                printArr.value = printArr.value.distinct()
+                //如果printarr的长度大于10就删除最后一个
+                if (printArr.value.size > 100) {
+                    printArr.value = printArr.value.dropLast(1)
+                }
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            chapters.collectLatest { list ->
+                //计算章节name的平均文字数量
+                if (list.isEmpty()) return@collectLatest
+                avergeLengthFlow.value = list.map { it.name.length }.average().toInt()
             }
         }
     }
@@ -139,7 +192,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         nodeApi?.connectedNodes?.addOnSuccessListener {
             if (it.size > 0) {
                 curNode = it[0]
-//                registerMessageListener()
+                registerMessageListener()
                 bandConnected.value = true
                 connectedFuture.complete(true)
             } else {
@@ -156,10 +209,12 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         } else {
             receiveFlow.value = "手环未连接"
         }
-        val isReady = connected && isBandAppInstalled()
+        val isReady = connected && checkPermissionGranted() && isBandAppInstalled()
         if (isReady) {
-//            receiveFlow.value = "手环应用已就绪"
-            registerMessageListener()
+            if (!printArr.value.contains("手环应用已就绪")) {
+                receiveFlow.value = "手环应用已就绪"
+            }
+            grantedErrFlow.value = false
         } else {
             receiveFlow.value = "手环应用未就绪"
             hasGrantedFlow.value = false
@@ -205,12 +260,14 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         }
         val installed = future.await()
         if (installed) {
-//            receiveFlow.value = "手环应用已安装"
-            return checkPermissionGranted()
+            //rug printarr `没有手环应用已安装`这句话才执行
+            if (!printArr.value.contains("手环应用已安装")) {
+                receiveFlow.value = "手环应用已安装"
+            }
         } else {
             receiveFlow.value = "手环应用未安装"
-            return installed
         }
+        return installed
     }
 
     private suspend fun checkPermissionGranted(): Boolean {
@@ -301,7 +358,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 receiveFlow.value = "发送reqBookInfo ${Json.encodeToString(BandMessage.BookInfo())}"
             }
                 ?.addOnFailureListener {
-                    receiveFlow.value = "发送reqBookInfo失败 ${it.stackTraceToString()}"
+                    receiveFlow.value = "发送reqBookInfo失败 ${it.message}"
                 }
         }
     }
@@ -412,27 +469,11 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 )?.addOnSuccessListener {
                     var count = 0
                     receiveFlow.value = "syncToBand book added"
-                    /*viewModelScope.launch(Dispatchers.IO) {
-                        while (true) {
-                            count = syncFlow.value.first
-                            delay(1000)
-                            if (count.equals(syncFlow.value.first)) {
-                                syncStatus.value = SyncStatus.SyncDef
-                                isSyncing.value = false
-                            }
-                            if (count < syncFlow.value.first) {
-                                syncStatus.value = SyncStatus.Syncing
-                                isSyncing.value = true
-                            }
-                        }
-                    }*/
-
                     syncJob = viewModelScope.launch(Dispatchers.IO) {
                         receiveFlow.value =
                             "send chapters ${appDatabase.chapterDao().countUnSynced(bookId)}"
-
                         appDatabase.chapterDao().getUnSyncChapters(bookId)
-                            .map { it.toChunk() }
+                            .map { it.toChunk(5000) }
                             .flatten()
                             .forEach loop@{ chapterByChunk ->
                                 if (cancelSync) {
@@ -440,7 +481,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                     return@loop
                                 }
                                 //如果chapter的index 是10的倍数就发送一次launchbandapp
-                                if (chapterByChunk.index % 10 == 0) {
+                                if (chapterByChunk.index % 20 == 0) {
                                     launchBandApp().let {
                                         if (!it) {
                                             syncStatus.value = SyncStatus.SyncDef
@@ -448,13 +489,11 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                         }
                                     }
                                 }
-
-
+                                syncStatus.value = SyncStatus.Syncing
                                 val future = CompletableFuture<Boolean>()
                                 val format = Json { encodeDefaults = true }
                                 val chapterMsg =
                                     format.encodeToString(BandMessage.AddChapter(chapterByChunk))
-                                Log.i("TAG", "序列化chapter $chapterMsg")
                                 messageApi?.sendMessage(curNode!!.id, chapterMsg.toByteArray())
                                     ?.addOnSuccessListener {
                                         viewModelScope.launch {
@@ -468,11 +507,14 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                                         .countSynced(chapterByChunk.bookId)
                                                 )
                                             }
+                                            syncFail = false
                                             future.complete(true)
                                         }
                                     }?.addOnFailureListener {
                                         syncStatus.value = SyncStatus.SyncFail
                                         Log.e("TAG", "send chapter err ${it.stackTraceToString()}")
+                                        cancelSync = true
+                                        syncFail = true
                                         future.complete(false)
                                     }
                                 if (!future.await()) {
@@ -482,10 +524,10 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                     syncStatus.value = SyncStatus.SyncRe
                                     isSyncing.value = false
                                 }
-                                if (chapterByChunk.content.length > 2000) {
-                                    delay(80)
+                                if (chapterByChunk.content.length < 1000) {
+                                    delay(40)
                                 } else {
-                                    delay(60)
+                                    delay(100)
                                 }
                             }
                     }
@@ -495,6 +537,24 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 }
             }
         }
+    }
+
+    fun changeBook(book: Book) = viewModelScope.launch(Dispatchers.IO) {
+        appDatabase.bookDao().update(book)
+        if(launchBandApp()){
+            delay(1500)
+            curNode?.let {
+                messageApi?.sendMessage(
+                    curNode!!.id, Json.encodeToString(BandMessage.UpdateBook(book)).toByteArray()
+                )?.addOnSuccessListener {
+                    receiveFlow.value = "UpdateBook ${Json.encodeToString(BandMessage.UpdateBook(book))}"
+                }
+                    ?.addOnFailureListener {
+                        receiveFlow.value = "UpdateBook失败 ${it.message}"
+                    }
+            }
+        }
+
     }
 
     fun delBook(book: Book) = viewModelScope.launch(Dispatchers.IO) {

@@ -14,4 +14,6 @@ sealed class BandMessage(
 
     @Serializable
     data class BookInfo(var content: String = "") : BandMessage("book_info")
+    @Serializable
+    data class UpdateBook(var content: Book) : BandMessage("update_book")
 }
