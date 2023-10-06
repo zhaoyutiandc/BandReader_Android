@@ -25,3 +25,6 @@ data class Book(
 fun Book.toJsonString():String{
     return Json.encodeToString(this)
 }
+
+@Serializable
+data class Cover(val id: Int,var first:Boolean, val cover: String,val end:Boolean)

@@ -1,11 +1,11 @@
 package com.example.bandReader
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Base64
 import android.util.Log
 import android.widget.Toast
-import androidx.compose.runtime.mutableStateListOf
-import androidx.datastore.dataStore
 import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,6 +14,7 @@ import com.example.bandReader.data.AppDatabase
 import com.example.bandReader.data.BandMessage
 import com.example.bandReader.data.Book
 import com.example.bandReader.data.Chapter
+import com.example.bandReader.data.Cover
 import com.example.bandReader.data.SyncStatus
 import com.example.bandReader.data.toChunk
 import com.xiaomi.xms.wearable.Status
@@ -21,6 +22,7 @@ import com.xiaomi.xms.wearable.Wearable
 import com.xiaomi.xms.wearable.auth.AuthApi
 import com.xiaomi.xms.wearable.auth.Permission
 import com.xiaomi.xms.wearable.message.MessageApi
+import com.xiaomi.xms.wearable.message.OnMessageReceivedListener
 import com.xiaomi.xms.wearable.node.Node
 import com.xiaomi.xms.wearable.node.NodeApi
 import com.xiaomi.xms.wearable.notify.NotifyApi
@@ -48,16 +50,11 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.BufferedReader
-import java.io.FileDescriptor
-import java.io.FileInputStream
-import java.io.FileNotFoundException
-import java.io.IOException
-import java.io.InputStream
-import java.io.InputStreamReader
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.CompletableFuture
 import javax.inject.Inject
 
-
+val format = Json { ignoreUnknownKeys = true }
 @HiltViewModel
 class MainViewModel @Inject constructor(@ApplicationContext val appContext: Context) :
     ViewModel() {
@@ -79,6 +76,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     val syncStatus = MutableStateFlow<SyncStatus>(SyncStatus.SyncDef)
     val isSyncing = MutableStateFlow(false)
     val isImporting = MutableStateFlow(false)
+    val isUpdateting = MutableStateFlow(false)
     val chapterLoading = MutableStateFlow(false)
     private val granted = MutableStateFlow("")
     val grantedErrFlow = MutableStateFlow(false)
@@ -86,7 +84,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     val syncFlow = MutableStateFlow(Pair(0, 0))
     val receiveFlow = MutableStateFlow("receiveFlow")
     val restartFlow = MutableStateFlow(false)
-    private val bandBooksFlow = MutableStateFlow<List<Book>>(emptyList())
+    val bandBooksFlow = MutableStateFlow<List<Book>>(emptyList())
     val currentBookFlow = MutableStateFlow<Book?>(null)
     var notInstall = false
     val shareUri = MutableStateFlow(Uri.EMPTY)
@@ -94,6 +92,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     var printArr = MutableStateFlow<List<String>>(emptyList<String>().toMutableList())
     var appConfigFlow = MutableStateFlow(AppConfig(showLog = false, boost = false))
     val avergeLengthFlow = MutableStateFlow(0)
+    val messageFlow = MutableStateFlow("")
 
     fun getChapters(bookId: Int) = viewModelScope.launch {
         chapterLoading.value = true
@@ -132,10 +131,10 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             }
         }
         nodeApi = Wearable.getNodeApi(appContext)
-        messageApi = Wearable.getMessageApi(appContext)
         authApi = Wearable.getAuthApi(appContext)
         serviceApi = Wearable.getServiceApi(appContext)
         notifyApi = Wearable.getNotifyApi(appContext)
+        messageApi = Wearable.getMessageApi(appContext)
         serviceApi.registerServiceConnectionListener(object : OnServiceConnectionListener {
             override fun onServiceConnected() {
                 viewModelScope.launch(Dispatchers.IO) {
@@ -185,6 +184,12 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 avergeLengthFlow.value = list.map { it.name.length }.average().toInt()
             }
         }
+        viewModelScope.launch(Dispatchers.IO) {
+            messageFlow.collectLatest {
+                //消息接收
+                handleMessage(it)
+            }
+        }
     }
 
     suspend fun getConnectedDevice(): Boolean {
@@ -192,7 +197,6 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         nodeApi?.connectedNodes?.addOnSuccessListener {
             if (it.size > 0) {
                 curNode = it[0]
-                registerMessageListener()
                 bandConnected.value = true
                 connectedFuture.complete(true)
             } else {
@@ -213,6 +217,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         if (isReady) {
             if (!printArr.value.contains("手环应用已就绪")) {
                 receiveFlow.value = "手环应用已就绪"
+                registerMessageListener()
             }
             grantedErrFlow.value = false
         } else {
@@ -355,7 +360,8 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             messageApi?.sendMessage(
                 curNode!!.id, Json.encodeToString(BandMessage.BookInfo()).toByteArray()
             )?.addOnSuccessListener {
-                receiveFlow.value = "发送reqBookInfo ${Json.encodeToString(BandMessage.BookInfo())}"
+                receiveFlow.value =
+                    "发送reqBookInfo ${Json.encodeToString(BandMessage.BookInfo())}"
             }
                 ?.addOnFailureListener {
                     receiveFlow.value = "发送reqBookInfo失败 ${it.message}"
@@ -363,16 +369,32 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         }
     }
 
-    fun handleMessage(message: ByteArray) {
-        val raw = message.decodeToString()
-        val type =
-            Json.parseToJsonElement(raw).jsonObject["type"]!!.jsonPrimitive.content
-        receiveFlow.value = "registerMessageListener type $type"
+    fun handleMessage(message: String) {
+//        receiveFlow.value = "handleMessage $message"
+        if (message.isEmpty() || message.isBlank() || message == "null") return
+        val json = try {
+            Json.parseToJsonElement(message)
+        } catch (e: Exception) {
+            receiveFlow.value = "handleMessage err ${e.message}"
+            return
+        }
+        var rawdata = (json.jsonObject["data"]!!).toString()
+            .replace("""\""", """""")
+        rawdata = rawdata.substring(1, rawdata.length - 1)
+        val data = try {
+            Json.parseToJsonElement(rawdata)
+        } catch (e: Exception) {
+            receiveFlow.value = "handleMessage err ${e.message}"
+            return
+        }
+        receiveFlow.value = "handleMessage data $data"
+        val type = data.jsonObject["type"]!!.jsonPrimitive.content
+        receiveFlow.value = "handleMessage type $type"
         when (type) {
             "book_info" -> {
                 val content =
-                    Json.parseToJsonElement(raw).jsonObject["content"]!!.jsonArray.map {
-                        Json.decodeFromJsonElement<Book>(it)
+                    data.jsonObject["content"]!!.jsonArray.map {
+                        format.decodeFromJsonElement<Book>(it)
                     }
                 receiveFlow.value = "receive message:type $type message $content"
                 bandBooksFlow.value = content
@@ -400,20 +422,24 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 }
             }
 
+            "log" -> {
+                receiveFlow.value = "band log.txt: $data"
+            }
+
             else -> {
-                val content =
-                    Json.parseToJsonElement(raw).jsonObject["content"]!!.jsonPrimitive.content
-                receiveFlow.value = "receive message:type other $type message $content"
+                receiveFlow.value = "receive message:type other $type message $json"
             }
         }
     }
 
-    private fun registerMessageListener() {
-        if (hasListener) return
+    private val messageListener: OnMessageReceivedListener =
+        OnMessageReceivedListener { did, message ->
+            this.messageFlow.value = message.decodeToString()
+        }
+
+    fun registerMessageListener() {
         curNode?.let { node ->
-            messageApi?.addListener(node.id) { _, message ->
-                handleMessage(message)
-            }?.addOnSuccessListener {
+            messageApi?.addListener(node.id, messageListener)?.addOnSuccessListener {
                 receiveFlow.value = "listener success"
                 hasListener = true
             }?.addOnFailureListener {
@@ -512,7 +538,10 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                         }
                                     }?.addOnFailureListener {
                                         syncStatus.value = SyncStatus.SyncFail
-                                        Log.e("TAG", "send chapter err ${it.stackTraceToString()}")
+                                        Log.e(
+                                            "TAG",
+                                            "send chapter err ${it.stackTraceToString()}"
+                                        )
                                         cancelSync = true
                                         syncFail = true
                                         future.complete(false)
@@ -539,15 +568,71 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         }
     }
 
-    fun changeBook(book: Book) = viewModelScope.launch(Dispatchers.IO) {
+    fun changeBook(book: Book, cover: Bitmap? = null) = viewModelScope.launch(Dispatchers.IO) {
         appDatabase.bookDao().update(book)
-        if(launchBandApp()){
+        if (launchBandApp()) {
             delay(1500)
             curNode?.let {
+                val addFuture = CompletableFuture<Boolean>()
+                val msg = Json.encodeToString(BandMessage.AddBook(book))
                 messageApi?.sendMessage(
-                    curNode!!.id, Json.encodeToString(BandMessage.UpdateBook(book)).toByteArray()
+                    curNode!!.id, msg.toByteArray()
+                )?.addOnSuccessListener { addFuture.complete(true) }
+                    ?.addOnFailureListener { addFuture.complete(false) }
+                addFuture.await()
+                messageApi?.sendMessage(
+                    curNode!!.id,
+                    Json.encodeToString(BandMessage.UpdateBook(book)).toByteArray()
                 )?.addOnSuccessListener {
-                    receiveFlow.value = "UpdateBook ${Json.encodeToString(BandMessage.UpdateBook(book))}"
+                    receiveFlow.value =
+                        "UpdateBook  start  ${Json.encodeToString(BandMessage.UpdateBook(book))}"
+                    viewModelScope.launch(Dispatchers.IO) {
+                        delay(1600)
+                        cover?.let {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(appContext, "开始发送封面", Toast.LENGTH_SHORT).show()
+                            }
+                            val stream = ByteArrayOutputStream()
+                            cover.compress(Bitmap.CompressFormat.PNG, 90, stream)
+                            val byteArray = stream.toByteArray()
+                            //byteArray按3000长度切割
+                            val chunks = byteArray.toList().chunked(5000)
+
+                            chunks.forEachIndexed { index, chunk ->
+                                var temp = chunk.joinToString(",")
+                                if (index == chunks.size - 1) {
+                                    val random = (0..99).random()
+                                    temp = "$temp,$random,$random,$random,$random"
+                                }
+                                val future = CompletableFuture<Boolean>()
+                                messageApi?.sendMessage(
+                                    curNode!!.id,
+                                    Json.encodeToString(
+                                        BandMessage.UpdateCover(
+                                            Cover(
+                                                book.id,
+                                                first = index == 0,
+                                                temp,
+                                                end = index == chunks.size - 1
+                                            )
+                                        )
+                                    ).toByteArray(),
+                                )?.addOnSuccessListener {
+                                    receiveFlow.value = "UpdateCover ${book.id}"
+                                    future.complete(true)
+                                }?.addOnFailureListener {
+                                    receiveFlow.value = "UpdateCover失败 ${it.message}"
+                                    future.complete(false)
+                                }
+                                future.await()
+                                delay(100)
+                            }
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(appContext, "封面发送完成", Toast.LENGTH_SHORT).show()
+                            }
+                            Log.i("TAG", "byteArray:${byteArray.size}")
+                        }
+                    }
                 }
                     ?.addOnFailureListener {
                         receiveFlow.value = "UpdateBook失败 ${it.message}"

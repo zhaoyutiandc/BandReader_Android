@@ -11,6 +11,7 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.mutableStateOf
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -30,6 +31,7 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
 val EXAMPLE_COUNTER = intPreferencesKey("example_counter")
 val KEY_ERR = stringPreferencesKey("key_err")
 val APP_CONFIG = stringPreferencesKey("app_config")
+val HAS_LISTENER = booleanPreferencesKey("has_listener")
 
 @HiltAndroidApp
 class MyApplication :Application(), Thread.UncaughtExceptionHandler {

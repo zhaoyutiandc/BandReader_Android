@@ -1,13 +1,21 @@
 package com.example.bandReader.util
 
+import android.R.attr.height
+import android.R.attr.width
 import android.content.ContentUris
 import android.content.Context
 import android.database.Cursor
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.util.Log
+import com.example.bandReader.MainActivity
 import java.io.File
+
 
 object FileUtils{
     fun getRealPath(context: Context, fileUri: Uri): String? {
@@ -66,6 +74,7 @@ object FileUtils{
         val split =
             docId.split(":".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
         val type = split[0]
+        Log.i("TAG","file type: $type"  )
 
         // This is for checking Main Memory
         return if ("primary".equals(type, ignoreCase = true)) {
@@ -129,7 +138,7 @@ object FileUtils{
             docId.split(":".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
         val type = split[0]
         var contentUri: Uri? = null
-
+        Log.i("TAG","file type: $type"  )
         when (type) {
             "document"->{
                 contentUri = uri
@@ -191,5 +200,22 @@ object FileUtils{
 
     internal fun Uri.isGooglePhotosUri(): Boolean {
         return "com.google.android.apps.photos.content" == authority
+    }
+
+    fun getBitmapFromUri(context: Context, uri: Uri): Bitmap? {
+        val originalBitmap = when {
+            Build.VERSION.SDK_INT < 28 -> MediaStore.Images.Media.getBitmap(
+                context.contentResolver,
+                uri
+            )
+
+            else -> {
+                val source = ImageDecoder.createSource(context.contentResolver, uri)
+                ImageDecoder.decodeBitmap(source)
+            }
+        }
+        val scaledBitmap = Bitmap.createScaledBitmap(originalBitmap, 336/3,480/3, true)
+        Log.i("TAG","bitmap created size ${scaledBitmap.byteCount / 1024}")
+        return scaledBitmap
     }
 }

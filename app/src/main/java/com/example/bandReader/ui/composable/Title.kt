@@ -2,6 +2,7 @@ package com.example.bandReader.ui.composable
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
@@ -34,8 +35,9 @@ fun Title(
             text = str,
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
-            maxLines = 2,
+            maxLines = 1,
             lineHeight = 26.sp,
+            modifier = Modifier.basicMarquee()
         )
         subStr?.let {
             Spacer(modifier = Modifier.padding(1.dp))

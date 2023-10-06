@@ -8,6 +8,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -30,6 +31,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -53,6 +55,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FabPosition
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -77,6 +80,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -85,10 +89,12 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.datastore.preferences.core.edit
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -109,22 +115,34 @@ import com.example.bandReader.ui.theme.BlueGray80
 import com.example.bandReader.ui.theme.BtnColor
 import com.example.bandReader.ui.theme.BtnGrayColor
 import com.example.bandReader.ui.theme.ItemColor
+import com.example.bandReader.ui.theme.FillBtnColor
 import com.example.bandReader.util.FileUtils
 import com.permissionx.guolindev.PermissionX
+import com.xiaomi.xms.wearable.Wearable
+import com.xiaomi.xms.wearable.message.MessageApi
+import com.xiaomi.xms.wearable.message.OnMessageReceivedListener
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.mozilla.universalchardet.UniversalDetector
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.nio.charset.Charset
 import java.nio.charset.CharsetDecoder
+import java.util.concurrent.CompletableFuture
 
 
 val openDialog: MutableStateFlow<Boolean> = MutableStateFlow(false)
@@ -133,6 +151,7 @@ val showFlow: MutableStateFlow<String> = MutableStateFlow("")
 val logFlow: MutableStateFlow<Any> = MutableStateFlow("")
 val logDialog: MutableStateFlow<Boolean> = MutableStateFlow(false)
 val printState: MutableState<Boolean> = mutableStateOf(false)
+var coverBitmapFlow: MutableStateFlow<Bitmap?> = MutableStateFlow(null)
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
@@ -143,21 +162,44 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bluetoothManager: BluetoothManager
     private lateinit var bluetoothAdapter: BluetoothAdapter
     private var countDown = 0L
+    val editDialogFlow = MutableStateFlow(false)
+    var hasListener = false
+    var messageApi: MessageApi? = null
 
-    private val pickFileLauncher =
+    val pickFileLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             //clear list
             uriFlow.value = Uri.EMPTY
             if (result.data?.data != null) {
                 result.data?.data?.let {
                     uriFlow.value = it
+                    mainViewModel.receiveFlow.value = "pickFileLauncher $it"
+                    if (editDialogFlow.value && "$it".contains("image")) {
+                        val bitmap = FileUtils.getBitmapFromUri(this@MainActivity, it)
+                        coverBitmapFlow.value = bitmap
+                        mainViewModel.receiveFlow.value = "图片路径 $it"
+                        return@let
+                    }
+
                     val path = FileUtils.getRealPath(this@MainActivity, it) ?: "无路径"
                     filePath.value = path
-                    if (!filePath.value.endsWith(".txt")) {
-                        Toast.makeText(this@MainActivity, "不支持的文件格式", Toast.LENGTH_SHORT)
-                            .show()
+                    //判断path是图片
+                    val suffix = path.substring(path.lastIndexOf(".") + 1)
+                    if (suffix == "jpg" || suffix == "png" && editDialogFlow.value) {
+                        val bitmap = FileUtils.getBitmapFromUri(this@MainActivity, it)
+                        coverBitmapFlow.value = bitmap
+                        mainViewModel.receiveFlow.value = "图片路径 $path"
                     } else {
-                        openDialog.value = true
+                        if (!filePath.value.endsWith(".txt")) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "不支持的文件格式",
+                                Toast.LENGTH_SHORT
+                            )
+                                .show()
+                        } else {
+                            openDialog.value = true
+                        }
                     }
                 }
             }
@@ -216,10 +258,11 @@ class MainActivity : AppCompatActivity() {
 
         initBlue()
         Log.e("TAG", "intent.action: ${intent.action}")
-
         if (intent.action == Intent.ACTION_VIEW) {
 //            onImport()
         }
+
+        messageApi = Wearable.getMessageApi(this)
 
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -357,7 +400,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         mainViewModel.curNode?.let {
-            mainViewModel.messageApi?.removeListener(mainViewModel.curNode!!.id)
+            messageApi?.removeListener(mainViewModel.curNode!!.id)
                 ?.addOnSuccessListener { mainViewModel.receiveFlow.value = "listener 卸载" }
                 ?.addOnFailureListener {
                     mainViewModel.receiveFlow.value =
@@ -481,6 +524,7 @@ class MainActivity : AppCompatActivity() {
     ) {
         val bookState = books.collectAsState(initial = emptyList())
         val grantedErrState = mainViewModel.grantedErrFlow.collectAsState()
+        val coroutineScope = rememberCoroutineScope()
         Scaffold(floatingActionButtonPosition = FabPosition.End, floatingActionButton = {
             if (false) {
                 Row(
@@ -516,7 +560,10 @@ class MainActivity : AppCompatActivity() {
                 Row(verticalAlignment = Alignment.Top) {
                     Title(
                         "书架", subStr = when {
-                            (bandConnectedState.value && bandAppInstalledState.value) -> "手环APP已连接"
+                            (bandConnectedState.value && bandAppInstalledState.value) -> {
+                                "手环APP已连接"
+                            }
+
                             (bandConnectedState.value && !bandAppInstalledState.value) -> "手环已连接APP未安装"
                             (bandConnectedState.value && bandAppInstalledState.value && !hasGrantedState.value) -> "APP已安装但权限异常"
                             (!bandConnectedState.value) -> "手环未连接"
@@ -548,8 +595,9 @@ class MainActivity : AppCompatActivity() {
 
                     val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.lottie_empty))
                     var delDialogState by remember { mutableStateOf(false) }
-                    var editDialogState by remember { mutableStateOf(false) }
+                    val editDialogState by editDialogFlow.collectAsState(initial = false)
                     var curBook by remember { mutableStateOf<Book?>(null) }
+                    var waitEdit by remember { mutableStateOf(false) }
 
                     if (bookState.value.isEmpty()) {
                         LottieAnimation(
@@ -582,21 +630,29 @@ class MainActivity : AppCompatActivity() {
                                 dialogSubText = "将会同步至手环",
                                 dialogText = curBook!!.name,
                                 edit = true,
+                                wait = waitEdit,
+                                cover = true,
                                 onConfirmation = {
+                                    waitEdit = true
                                     if (it.isBlank()) {
                                         Toast.makeText(
                                             this@MainActivity,
                                             "请输入书名!",
                                             Toast.LENGTH_SHORT
                                         ).show()
+                                        waitEdit = false
                                     } else {
-                                        mainViewModel.changeBook(curBook!!.copy(name = it))
+                                        mainViewModel.changeBook(
+                                            curBook!!.copy(name = it),
+                                            coverBitmapFlow.value
+                                        )
                                     }
                                 },
                                 onDismissRequest = { },
                                 finally = {
-                                    editDialogState = false
+                                    editDialogFlow.value = false
                                     curBook = null
+                                    coverBitmapFlow.value = null
                                 }
                             )
                         }
@@ -644,7 +700,7 @@ class MainActivity : AppCompatActivity() {
                                             text = "编辑",
                                             color = Blue80,
                                             modifier = Modifier.clickable(true) {
-                                                editDialogState = true
+                                                editDialogFlow.value = true
                                             })
                                         Spacer(modifier = Modifier.padding(8.dp))
                                         Text(
@@ -720,7 +776,7 @@ class MainActivity : AppCompatActivity() {
                     currentBookState.value!!.name,
                     subStr = "${syncCount.first}/${syncCount.second}",
                     modifier = Modifier.weight(1f),
-                    subOffset = 8.dp
+                    subOffset = 8.dp,
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 // button with icon
@@ -1006,20 +1062,24 @@ class MainActivity : AppCompatActivity() {
         }
         detector.reset()
         inputStream?.close()
-        encoding?.let {
+        encoding?.let { encode ->
             inputStream = context.contentResolver.openInputStream(uri)
-            val bufferedReader = BufferedReader(InputStreamReader(inputStream, it))
+            val bufferedReader = BufferedReader(InputStreamReader(inputStream, encode))
             var chapters = mutableListOf(Pair("", ""))
             val regex = Regex(""".{0,10}第.{1,10}章.{0,30}""")
             mainViewModel.receiveFlow.value = "开始读取"
             var counter = 0
             var counter2 = 0
-            var temp = Pair("", "")
+            var temp = Pair("开始", "")
             bufferedReader.lines().forEach {
                 counter++
                 temp = if (regex.matches(it)) {
                     counter2++
                     if (temp.first.isNotEmpty()) {
+                        var formatTitle = temp.first
+                        formatTitle = formatTitle.trim()
+                        formatTitle = formatTitle.replace("=", "")
+                        temp = temp.copy(first = formatTitle)
                         chapters.add(temp)
                         Pair(it, "")
                     } else {
@@ -1048,8 +1108,9 @@ class MainActivity : AppCompatActivity() {
 
         } ?: return emptyList<Chapter>().also {
             lifecycleScope.launch(Dispatchers.Main) {
-                Toast.makeText(mainViewModel.appContext, "不支持的编码格式", Toast.LENGTH_SHORT).show()
-                    //触发返回事件
+                Toast.makeText(mainViewModel.appContext, "不支持的编码格式", Toast.LENGTH_SHORT)
+                    .show()
+                //触发返回事件
                 onBackPressed()
                 delay(1000)
                 onBackPressed()
@@ -1066,6 +1127,7 @@ fun AlertDialogExample(
     finally: () -> Unit = {},
     dialogTitle: String,
     dialogText: String = "",
+    cover: Boolean = false,
     edit: Boolean = false,
     wait: Boolean = false,
     dialogSubText: String? = null,
@@ -1073,6 +1135,10 @@ fun AlertDialogExample(
     cancelText: String = "取消"
 ) {
     val bookNameState = remember { mutableStateOf(dialogText) }
+    val coverState = coverBitmapFlow.collectAsState()
+    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.lottie_photo))
+    //localcontext
+    val context = LocalContext.current
     AlertDialog(title = {
         Text(text = dialogTitle)
     }, text = {
@@ -1094,6 +1160,58 @@ fun AlertDialogExample(
                         .padding(0.dp, 4.dp)
                 )
             }
+            if (cover) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Box(modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 200.dp)
+                    .clickable {
+                        PermissionX
+                            .init(context as FragmentActivity)
+                            .permissions(
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) listOf(
+                                    Manifest.permission.READ_MEDIA_VIDEO,
+                                    Manifest.permission.READ_MEDIA_IMAGES,
+                                )
+                                else listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+                            )
+                            .request { allGranted, _, deniedList ->
+                                if (allGranted) {
+                                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+                                    //type picture
+                                    intent.type = "image/*"
+                                    (context as MainActivity).pickFileLauncher.launch(intent)
+                                }
+                            }
+                    }
+                ) {
+                    coverState.value?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = "",
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(0.dp, 4.dp)
+                        )
+                    } ?: Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(40.dp)
+                            .background(
+                                color = FillBtnColor, shape = RoundedCornerShape(8.dp)
+                            )
+                    ) {
+                        /*LottieAnimation(
+                            composition,
+                            modifier = Modifier.size(80.dp),
+                            iterations = LottieConstants.IterateForever,
+                        )*/
+                        Text("点击此处选择封面(可选)")
+                    }
+                }
+            }
 
         }
     }, onDismissRequest = {
@@ -1103,15 +1221,17 @@ fun AlertDialogExample(
             onConfirmation(bookNameState.value)
             finally()
         }) {
-            if (wait){
+            if (wait) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp).align(Alignment.CenterVertically),
+                    modifier = Modifier
+                        .size(16.dp)
+                        .align(Alignment.CenterVertically),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     trackColor = MaterialTheme.colorScheme.secondary,
                 )
                 Spacer(modifier = Modifier.width(6.dp))
             }
-            Text(confirmText,modifier=Modifier.align(Alignment.CenterVertically))
+            Text(confirmText, modifier = Modifier.align(Alignment.CenterVertically))
         }
     }, dismissButton = {
         TextButton(onClick = {

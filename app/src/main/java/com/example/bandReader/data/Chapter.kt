@@ -30,6 +30,8 @@ data class Chapter(
     var paging: Int,
     @ColumnInfo(name = "sync")
     var sync: Boolean = false,
+    @ColumnInfo(name = "list")
+    var list: String = "",
 )
 
 @Serializable
