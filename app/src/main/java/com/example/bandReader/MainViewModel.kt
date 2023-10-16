@@ -353,7 +353,11 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
 
     fun reqBookInfo(launch: Boolean = true) = viewModelScope.launch(Dispatchers.IO) {
         if (launch) {
-            launchBandApp()
+            launchBandApp().let {
+                if (!it) {
+                    return@launch
+                }
+            }
             delay(2000)
         }
         curNode?.let {

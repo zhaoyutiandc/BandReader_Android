@@ -143,6 +143,7 @@ import java.io.InputStreamReader
 import java.nio.charset.Charset
 import java.nio.charset.CharsetDecoder
 import java.util.concurrent.CompletableFuture
+import kotlin.streams.toList
 
 
 val openDialog: MutableStateFlow<Boolean> = MutableStateFlow(false)
@@ -343,7 +344,7 @@ class MainActivity : AppCompatActivity() {
                                     } else {
                                         mainViewModel.currentBookFlow.value = book
                                         navController.navigate("detail")
-                                        mainViewModel.reqBookInfo()
+                                        mainViewModel.reqBookInfo(true)
                                         mainViewModel.getChapters(book.id)
                                     }
 
@@ -630,7 +631,6 @@ class MainActivity : AppCompatActivity() {
                                 dialogSubText = "将会同步至手环",
                                 dialogText = curBook!!.name,
                                 edit = true,
-                                wait = waitEdit,
                                 cover = true,
                                 onConfirmation = {
                                     waitEdit = true
@@ -1071,26 +1071,54 @@ class MainActivity : AppCompatActivity() {
             var counter = 0
             var counter2 = 0
             var temp = Pair("开始", "")
-            bufferedReader.lines().forEach {
-                counter++
-                temp = if (regex.matches(it)) {
-                    counter2++
-                    if (temp.first.isNotEmpty()) {
-                        var formatTitle = temp.first
-                        formatTitle = formatTitle.trim()
-                        formatTitle = formatTitle.replace("=", "")
-                        temp = temp.copy(first = formatTitle)
-                        chapters.add(temp)
-                        Pair(it, "")
-                    } else {
-                        temp.copy(first = it)
-                    }
+            var lines = mutableListOf<String>()
+            val tempStr: StringBuilder = StringBuilder()
+            //循环读取bufferedReader char 遇到换行就往lines里面加
+            while (bufferedReader.ready()) {
+                val char = bufferedReader.read().toChar()
+                if (char == '\n' || char == '\r') {
+                    lines.add(tempStr.toString())
+                    tempStr.clear()
                 } else {
-                    temp.copy(second = temp.second + it + "\n")
+                    // '\x00' continue
+                    if (char == '\u0000') continue
+                    /*if (tempStr.length > 10000) {
+                        lines.add(tempStr.toString())
+                        tempStr.clear()
+                    }*/
+                    tempStr.append(char)
                 }
             }
-            if (temp.second.isNotBlank()) {
-                chapters.add(temp)
+            lines.add(tempStr.toString())
+            val matches = lines.count { regex.matches(it) }
+            lines = lines.filter { it.isNotBlank() }.toMutableList()
+            if (lines.size<20 || (matches < 10)) {
+                val tempLines = mutableListOf<String>()
+                lines.chunked(50).forEachIndexed { idx, it ->
+                    chapters.add(Pair("第${idx + 1}部分", it.joinToString("\n")))
+                }
+            } else {
+                lines.forEach {
+                    counter++
+                    temp = if (regex.matches(it)) {
+                        counter2++
+                        if (temp.first.isNotEmpty()) {
+                            var formatTitle = temp.first
+                            formatTitle = formatTitle.trim()
+                            formatTitle = formatTitle.replace("=", "")
+                            temp = temp.copy(first = formatTitle)
+                            chapters.add(temp)
+                            Pair(it, "")
+                        } else {
+                            temp.copy(first = it)
+                        }
+                    } else {
+                        temp.copy(second = temp.second + it + "\n")
+                    }
+                }
+                if (temp.second.isNotBlank()) {
+                    chapters.add(temp)
+                }
             }
             mainViewModel.receiveFlow.value = "读取完毕"
             inputStream?.close()
