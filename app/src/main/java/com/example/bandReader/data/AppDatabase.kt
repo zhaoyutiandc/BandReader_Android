@@ -1,7 +1,6 @@
 package com.example.bandReader.data
 
 import android.content.Context
-import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -20,8 +19,8 @@ abstract class AppDatabase : RoomDatabase() {
         const val DATABASE_NAME = "BOOK_DATABASE"
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL("ALTER TABLE chapter ADD COLUMN list TEXT NOT NULL DEFAULT ''")
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chapter ADD COLUMN list TEXT NOT NULL DEFAULT ''")
             }
         }
 

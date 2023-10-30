@@ -37,6 +37,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -45,7 +46,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -55,6 +62,7 @@ import java.util.concurrent.CompletableFuture
 import javax.inject.Inject
 
 val format = Json { ignoreUnknownKeys = true }
+
 @HiltViewModel
 class MainViewModel @Inject constructor(@ApplicationContext val appContext: Context) :
     ViewModel() {
@@ -93,8 +101,9 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     var appConfigFlow = MutableStateFlow(AppConfig(showLog = false, boost = false))
     val avergeLengthFlow = MutableStateFlow(0)
     val messageFlow = MutableStateFlow("")
+    var syncingList = false
 
-    fun getChapters(bookId: Int) = viewModelScope.launch {
+    suspend fun getChapters(bookId: Int) {
         chapterLoading.value = true
         chapters = appDatabase.chapterDao().getChaptersByBookId(bookId)
         syncFlow.value = Pair(
@@ -218,6 +227,9 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             if (!printArr.value.contains("手环应用已就绪")) {
                 receiveFlow.value = "手环应用已就绪"
                 registerMessageListener()
+                viewModelScope.launch(Dispatchers.IO) {
+                    reqBookInfo()
+                }
             }
             grantedErrFlow.value = false
         } else {
@@ -351,11 +363,12 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             })
     }
 
-    fun reqBookInfo(launch: Boolean = true) = viewModelScope.launch(Dispatchers.IO) {
+    suspend fun reqBookInfo(launch: Boolean = true) {
+        val future = CompletableFuture<Boolean>()
         if (launch) {
             launchBandApp().let {
                 if (!it) {
-                    return@launch
+                    return
                 }
             }
             delay(2000)
@@ -366,11 +379,14 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             )?.addOnSuccessListener {
                 receiveFlow.value =
                     "发送reqBookInfo ${Json.encodeToString(BandMessage.BookInfo())}"
+                future.complete(true)
             }
                 ?.addOnFailureListener {
                     receiveFlow.value = "发送reqBookInfo失败 ${it.message}"
+                    future.complete(false)
                 }
         }
+        future.await()
     }
 
     fun handleMessage(message: String) {
@@ -398,7 +414,31 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             "book_info" -> {
                 val content =
                     data.jsonObject["content"]!!.jsonArray.map {
-                        format.decodeFromJsonElement<Book>(it)
+                        val jbook = format.decodeFromJsonElement<Book>(it)
+                        val list = it.jsonObject["list"]?.jsonPrimitive?.booleanOrNull
+                        if (list == null || !list) {
+                            viewModelScope.launch(Dispatchers.IO) {
+                                syncingList = true
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(
+                                        appContext,
+                                        "正在同步${jbook.name}章节列表",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                listInfo(bookId = jbook.id, chapters = appDatabase.chapterDao().getChaptersByBookIdSync(jbook.id))
+                                syncingList = false
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(
+                                        appContext,
+                                        "${jbook.name}章节列表同步完成",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+
+                        return@map jbook
                     }
                 receiveFlow.value = "receive message:type $type message $content"
                 bandBooksFlow.value = content
@@ -433,6 +473,50 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             else -> {
                 receiveFlow.value = "receive message:type other $type message $json"
             }
+        }
+    }
+
+    suspend fun listInfo(bookId: Int, chapters: List<Chapter>) {
+        delay(100)
+        //json arrar
+        Log.i("TAG", "listInfo: ${chapters.size}")
+        for ((index, chunk) in chapters.chunked(200).withIndex()) {
+            val future = CompletableFuture<Boolean>()
+            val jsonArr = chunk.map {
+                Json.encodeToString(JsonObject(
+                    mapOf(
+                        "title" to JsonPrimitive(it.name),
+                        "id" to JsonPrimitive(it.id),
+                        "index" to JsonPrimitive(it.index),
+                        "paging" to JsonPrimitive(it.paging),
+                    )
+                ))
+            }
+            val info = JsonObject(
+                mapOf(
+                    "index" to JsonPrimitive(index),
+                    "bid" to JsonPrimitive(bookId),
+                    "first" to JsonPrimitive(index == 0),
+                    "end" to JsonPrimitive(chunk.last().id == chapters.last().id),
+                    "list" to JsonPrimitive(jsonArr.joinToString("\n"))
+                )
+            )
+            val msg = Json.encodeToString(BandMessage.ListInfo(info))
+            curNode?.let {
+                messageApi?.sendMessage(
+                    curNode!!.id,
+                    msg.toByteArray()
+                )?.addOnSuccessListener {
+                    receiveFlow.value =
+                        "发送ListInfo ${index} ${chunk.size}"
+                    future.complete(true)
+                }?.addOnFailureListener {
+                    receiveFlow.value = "发送ListInfo失败 ${it.message}"
+                    future.complete(false)
+                }
+            }
+            future.await()
+            delay(200)
         }
     }
 
@@ -481,7 +565,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             syncStatus.value = SyncStatus.Syncing
             val book = appDatabase.bookDao().getBookById(bookId)
             receiveFlow.value = "syncToBand"
-            if (syncFlow.value.first.equals(syncFlow.value.second)) {
+            if (syncFlow.value.first == syncFlow.value.second) {
 //                syncStatus.value = SyncStatus.SyncRe
                 appDatabase.chapterDao().setAllUnSync(bookId)
                 syncFlow.value = Pair(
@@ -502,8 +586,22 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                     syncJob = viewModelScope.launch(Dispatchers.IO) {
                         receiveFlow.value =
                             "send chapters ${appDatabase.chapterDao().countUnSynced(bookId)}"
+                        if (appDatabase.chapterDao().countUnSynced(bookId) == appDatabase.chapterDao().countChapterBy(bookId)) {
+                            receiveFlow.value = "开始同步章节消息"
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(appContext, "开始同步章节消息", Toast.LENGTH_SHORT)
+                                    .show()
+                            }
+                            listInfo(bookId, appDatabase.chapterDao().getChaptersByBookIdSync(bookId))
+                            receiveFlow.value = "同步章节消息完成"
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(appContext, "同步章节消息完成", Toast.LENGTH_SHORT)
+                                    .show()
+                            }
+                            delay(1000)
+                        }
                         appDatabase.chapterDao().getUnSyncChapters(bookId)
-                            .map { it.toChunk(5000) }
+                            .map { it.toChunk(4000) }
                             .flatten()
                             .forEach loop@{ chapterByChunk ->
                                 if (cancelSync) {
@@ -594,7 +692,8 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                         delay(1600)
                         cover?.let {
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(appContext, "开始发送封面", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(appContext, "开始发送封面", Toast.LENGTH_SHORT)
+                                    .show()
                             }
                             val stream = ByteArrayOutputStream()
                             cover.compress(Bitmap.CompressFormat.PNG, 90, stream)
@@ -632,7 +731,8 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                 delay(100)
                             }
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(appContext, "封面发送完成", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(appContext, "封面发送完成", Toast.LENGTH_SHORT)
+                                    .show()
                             }
                             Log.i("TAG", "byteArray:${byteArray.size}")
                         }

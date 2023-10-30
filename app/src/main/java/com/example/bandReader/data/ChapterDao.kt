@@ -20,6 +20,8 @@ interface ChapterDao {
     suspend fun delete(chapter: Chapter): Int
     @Query("SELECT * FROM chapter WHERE bookId = :bookId order by `index`")
     fun getChaptersByBookId(bookId: Int): Flow<List<Chapter>>
+    @Query("SELECT * FROM chapter WHERE bookId = :bookId order by `index`")
+    fun getChaptersByBookIdSync(bookId: Int): List<Chapter>
     //un sync chapters
     @Query("SELECT * FROM chapter WHERE bookId = :bookId and sync = 0")
     suspend fun getUnSyncChapters(bookId:Int): List<Chapter>

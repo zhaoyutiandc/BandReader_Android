@@ -277,6 +277,7 @@ class MainActivity : AppCompatActivity() {
 
         setContent {
             BandReaderTheme(darkTheme = true) {
+                val coroutineScope = rememberCoroutineScope()
                 navController = rememberNavController()
                 (navController as NavHostController).setLifecycleOwner(this@MainActivity)
                 // A surface container using the 'background' color from the theme
@@ -341,11 +342,19 @@ class MainActivity : AppCompatActivity() {
                                             "${mainViewModel.currentBookFlow.value!!.name}同步中请稍后",
                                             Toast.LENGTH_SHORT
                                         ).show()
+                                    } else if (mainViewModel.syncingList) {
+                                        Toast.makeText(
+                                            context,
+                                            "同步列表中请稍后",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     } else {
                                         mainViewModel.currentBookFlow.value = book
                                         navController.navigate("detail")
-                                        mainViewModel.reqBookInfo(true)
-                                        mainViewModel.getChapters(book.id)
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            mainViewModel.getChapters(book.id)
+                                            mainViewModel.reqBookInfo(true)
+                                        }
                                     }
 
                                 }, pickFile = {
@@ -1092,7 +1101,7 @@ class MainActivity : AppCompatActivity() {
             lines.add(tempStr.toString())
             val matches = lines.count { regex.matches(it) }
             lines = lines.filter { it.isNotBlank() }.toMutableList()
-            if (lines.size<20 || (matches < 10)) {
+            if (lines.size < 20 || (matches < 10)) {
                 val tempLines = mutableListOf<String>()
                 lines.chunked(50).forEachIndexed { idx, it ->
                     chapters.add(Pair("第${idx + 1}部分", it.joinToString("\n")))

@@ -1,6 +1,7 @@
 package com.example.bandReader.data
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 @Serializable
 sealed class BandMessage(
@@ -18,4 +19,6 @@ sealed class BandMessage(
     data class UpdateBook(var content: Book) : BandMessage("update_book")
     @Serializable
     data class UpdateCover(var content: Cover) : BandMessage("update_cover")
+    @Serializable
+    data class ListInfo(var content: JsonObject) : BandMessage("list_info")
 }
