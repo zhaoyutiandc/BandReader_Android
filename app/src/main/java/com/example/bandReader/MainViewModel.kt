@@ -427,6 +427,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                     ).show()
                                 }
                                 listInfo(bookId = jbook.id, chapters = appDatabase.chapterDao().getChaptersByBookIdSync(jbook.id))
+                                delay(1000)
                                 syncingList = false
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(
@@ -477,7 +478,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     }
 
     suspend fun listInfo(bookId: Int, chapters: List<Chapter>) {
-        delay(100)
+        delay(140)
         //json arrar
         Log.i("TAG", "listInfo: ${chapters.size}")
         for ((index, chunk) in chapters.chunked(200).withIndex()) {
@@ -587,15 +588,15 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                         receiveFlow.value =
                             "send chapters ${appDatabase.chapterDao().countUnSynced(bookId)}"
                         if (appDatabase.chapterDao().countUnSynced(bookId) == appDatabase.chapterDao().countChapterBy(bookId)) {
-                            receiveFlow.value = "开始同步章节消息"
+                            receiveFlow.value = "开始同步章节列表"
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(appContext, "开始同步章节消息", Toast.LENGTH_SHORT)
+                                Toast.makeText(appContext, "开始同步章节列表", Toast.LENGTH_SHORT)
                                     .show()
                             }
                             listInfo(bookId, appDatabase.chapterDao().getChaptersByBookIdSync(bookId))
-                            receiveFlow.value = "同步章节消息完成"
+                            receiveFlow.value = "同步章节列表完成"
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(appContext, "同步章节消息完成", Toast.LENGTH_SHORT)
+                                Toast.makeText(appContext, "同步章节列表完成", Toast.LENGTH_SHORT)
                                     .show()
                             }
                             delay(1000)
