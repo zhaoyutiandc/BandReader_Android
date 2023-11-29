@@ -1101,7 +1101,7 @@ class MainActivity : AppCompatActivity() {
             lines.add(tempStr.toString())
             val matches = lines.count { regex.matches(it) }
             lines = lines.filter { it.isNotBlank() }.toMutableList()
-            if (lines.size < 20 || (matches < 10)) {
+            if (lines.size > 1 || (matches < 10)) {
                 val tempLines = mutableListOf<String>()
                 lines.chunked(50).forEachIndexed { idx, it ->
                     chapters.add(Pair("第${idx + 1}部分", it.joinToString("\n")))
