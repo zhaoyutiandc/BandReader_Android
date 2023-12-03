@@ -21,4 +21,6 @@ sealed class BandMessage(
     data class UpdateCover(var content: Cover) : BandMessage("update_cover")
     @Serializable
     data class ListInfo(var content: JsonObject) : BandMessage("list_info")
+    @Serializable
+    data class TestChunk(var content: JsonObject) : BandMessage("test_chunk")
 }

@@ -389,6 +389,34 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         future.await()
     }
 
+    var sendLockFuture = CompletableFuture<Boolean>()
+
+    suspend fun sendTestChunk() {
+        //10000个随机个位数
+        val randomArr = (0..9999).map { (0..9).random() }
+        randomArr.chunked(1000).forEachIndexed { index, chunk ->
+            //jsonobjet {content:chunk.joinToString(",")}
+            val obj = JsonObject(
+                mapOf(
+                    "index" to JsonPrimitive(index),
+                    "content" to JsonPrimitive(chunk.joinToString(","))
+                )
+            )
+            curNode?.let {
+                messageApi?.sendMessage(
+                    curNode!!.id, Json.encodeToString(BandMessage.TestChunk(obj)).toByteArray()
+                )?.addOnSuccessListener {
+                    receiveFlow.value = "sendTestChunk ${Json.encodeToString(BandMessage.TestChunk(obj))}"
+//                    sendLockFuture = CompletableFuture<Boolean>()
+                }?.addOnFailureListener {
+                    receiveFlow.value = "sendTestChunk失败 ${it.message}"
+//                    sendLockFuture = CompletableFuture<Boolean>()
+                }
+            }
+            sendLockFuture.await()
+        }
+    }
+
     fun handleMessage(message: String) {
 //        receiveFlow.value = "handleMessage $message"
         if (message.isEmpty() || message.isBlank() || message == "null") return
@@ -426,7 +454,11 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 }
-                                listInfo(bookId = jbook.id, chapters = appDatabase.chapterDao().getChaptersByBookIdSync(jbook.id))
+                                listInfo(
+                                    bookId = jbook.id,
+                                    chapters = appDatabase.chapterDao()
+                                        .getChaptersByBookIdSync(jbook.id)
+                                )
                                 delay(1000)
                                 syncingList = false
                                 withContext(Dispatchers.Main) {
@@ -471,6 +503,13 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 receiveFlow.value = "band log.txt: $data"
             }
 
+            "test_chunk" -> {
+                val content = data.jsonObject["content"]!!.jsonArray.map {
+                    it.jsonPrimitive.content
+                }
+                receiveFlow.value = "接收test_chunk $content"
+            }
+
             else -> {
                 receiveFlow.value = "receive message:type other $type message $json"
             }
@@ -484,14 +523,16 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         for ((index, chunk) in chapters.chunked(200).withIndex()) {
             val future = CompletableFuture<Boolean>()
             val jsonArr = chunk.map {
-                Json.encodeToString(JsonObject(
-                    mapOf(
-                        "title" to JsonPrimitive(it.name),
-                        "id" to JsonPrimitive(it.id),
-                        "index" to JsonPrimitive(it.index),
-                        "paging" to JsonPrimitive(it.paging),
+                Json.encodeToString(
+                    JsonObject(
+                        mapOf(
+                            "title" to JsonPrimitive(it.name),
+                            "id" to JsonPrimitive(it.id),
+                            "index" to JsonPrimitive(it.index),
+                            "paging" to JsonPrimitive(it.paging),
+                        )
                     )
-                ))
+                )
             }
             val info = JsonObject(
                 mapOf(
@@ -587,13 +628,19 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                     syncJob = viewModelScope.launch(Dispatchers.IO) {
                         receiveFlow.value =
                             "send chapters ${appDatabase.chapterDao().countUnSynced(bookId)}"
-                        if (appDatabase.chapterDao().countUnSynced(bookId) == appDatabase.chapterDao().countChapterBy(bookId)) {
+                        if (appDatabase.chapterDao()
+                                .countUnSynced(bookId) == appDatabase.chapterDao()
+                                .countChapterBy(bookId)
+                        ) {
                             receiveFlow.value = "开始同步章节列表"
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(appContext, "开始同步章节列表", Toast.LENGTH_SHORT)
                                     .show()
                             }
-                            listInfo(bookId, appDatabase.chapterDao().getChaptersByBookIdSync(bookId))
+                            listInfo(
+                                bookId,
+                                appDatabase.chapterDao().getChaptersByBookIdSync(bookId)
+                            )
                             receiveFlow.value = "同步章节列表完成"
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(appContext, "同步章节列表完成", Toast.LENGTH_SHORT)

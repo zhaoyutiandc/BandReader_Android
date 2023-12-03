@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -317,6 +318,11 @@ class MainActivity : AppCompatActivity() {
                         )
                     }
                     Column {
+                        Button(onClick = {
+                            coroutineScope.launch { mainViewModel.sendTestChunk() }
+                        }) {
+                            Text(text = "send")
+                        }
                         //日志
                         AnimatedVisibility(printState.value) {
                             Column(
