@@ -393,13 +393,17 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
 
     suspend fun sendTestChunk() {
         //10000个随机个位数
-        val randomArr = (0..9999).map { (0..9).random() }
-        randomArr.chunked(1000).forEachIndexed { index, chunk ->
+        //q: 0..99999的random数组分成3000个一组 一共有多少组
+        //a: 34组
+        //q: 那就是0-33组吗
+        //a: 是的
+        val randomArr = (0..99999).map { "啊" }
+        randomArr.chunked(5000).forEachIndexed { index, chunk ->
             //jsonobjet {content:chunk.joinToString(",")}
             val obj = JsonObject(
                 mapOf(
                     "index" to JsonPrimitive(index),
-                    "content" to JsonPrimitive(chunk.joinToString(","))
+                    "content" to JsonPrimitive(chunk.size)
                 )
             )
             curNode?.let {
@@ -414,11 +418,12 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 }
             }
             sendLockFuture.await()
+            sendLockFuture = CompletableFuture<Boolean>()
         }
     }
 
     fun handleMessage(message: String) {
-//        receiveFlow.value = "handleMessage $message"
+        receiveFlow.value = "handleMessage $message"
         if (message.isEmpty() || message.isBlank() || message == "null") return
         val json = try {
             Json.parseToJsonElement(message)
@@ -503,11 +508,17 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 receiveFlow.value = "band log.txt: $data"
             }
 
+            "chapter_saved" -> {
+                val content = data.jsonObject["content"]!!.jsonPrimitive.content
+                receiveFlow.value = "接收chapter_saved $content"
+                sendLockFuture.complete(true)
+            }
+
             "test_chunk" -> {
-                val content = data.jsonObject["content"]!!.jsonArray.map {
-                    it.jsonPrimitive.content
-                }
+                // content是int
+                val content = data.jsonObject["content"]!!.jsonPrimitive.content
                 receiveFlow.value = "接收test_chunk $content"
+                sendLockFuture.complete(true)
             }
 
             else -> {
@@ -656,7 +667,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                     syncStatus.value = SyncStatus.SyncDef
                                     return@loop
                                 }
-                                //如果chapter的index 是10的倍数就发送一次launchbandapp
+                                //如果chapter的index 是20的倍数就发送一次launchbandapp
                                 if (chapterByChunk.index % 20 == 0) {
                                     launchBandApp().let {
                                         if (!it) {
@@ -664,6 +675,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                             return@loop
                                         }
                                     }
+                                    delay(100)
                                 }
                                 syncStatus.value = SyncStatus.Syncing
                                 val future = CompletableFuture<Boolean>()
@@ -684,7 +696,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                                 )
                                             }
                                             syncFail = false
-                                            future.complete(true)
+//                                            future.complete(true)
                                         }
                                     }?.addOnFailureListener {
                                         syncStatus.value = SyncStatus.SyncFail
@@ -694,20 +706,26 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                         )
                                         cancelSync = true
                                         syncFail = true
-                                        future.complete(false)
+//                                        future.complete(false)
                                     }
-                                if (!future.await()) {
+
+                                /*
+                                * if (!future.await()) {
                                     syncStatus.value = SyncStatus.SyncFail
                                     return@loop
-                                } else if (chapterByChunk.last && chapterByChunk.index == book.chapters - 1) {
+                                } else
+                                * */
+                                sendLockFuture.await()
+                                sendLockFuture = CompletableFuture<Boolean>()
+                                if (chapterByChunk.last && chapterByChunk.index == book.chapters - 1) {
                                     syncStatus.value = SyncStatus.SyncRe
                                     isSyncing.value = false
                                 }
-                                if (chapterByChunk.content.length < 1000) {
+                               /* if (chapterByChunk.content.length < 1000) {
                                     delay(40)
                                 } else {
                                     delay(100)
-                                }
+                                }*/
                             }
                     }
                 }?.addOnFailureListener {
