@@ -403,14 +403,14 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             val obj = JsonObject(
                 mapOf(
                     "index" to JsonPrimitive(index),
-                    "content" to JsonPrimitive(chunk.size)
+                    "content" to JsonPrimitive(chunk.toString())
                 )
             )
             curNode?.let {
                 messageApi?.sendMessage(
                     curNode!!.id, Json.encodeToString(BandMessage.TestChunk(obj)).toByteArray()
                 )?.addOnSuccessListener {
-                    receiveFlow.value = "sendTestChunk ${Json.encodeToString(BandMessage.TestChunk(obj))}"
+                    receiveFlow.value = "sendTestChunk ${index} ${chunk.size}"
 //                    sendLockFuture = CompletableFuture<Boolean>()
                 }?.addOnFailureListener {
                     receiveFlow.value = "sendTestChunk失败 ${it.message}"
