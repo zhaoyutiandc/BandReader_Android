@@ -25,6 +25,8 @@ interface ChapterDao {
     //un sync chapters
     @Query("SELECT * FROM chapter WHERE bookId = :bookId and sync = 0")
     suspend fun getUnSyncChapters(bookId:Int): List<Chapter>
+    @Query("SELECT * FROM chapter WHERE bookId = :bookId and `index` >= :start and `index` <= :end order by `index`")
+    suspend fun getChapterByBookIdAndIndexRange(bookId: Int, start: Int, end: Int): List<Chapter>
     @Query("SELECT COUNT(*) FROM chapter WHERE bookId = :bookId")
     suspend fun countChapterBy(bookId: Int):Int
     @Query("SELECT COUNT(*) FROM chapter WHERE bookId = :bookId and sync = 0")

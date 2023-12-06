@@ -53,7 +53,7 @@ fun Chapter.toJsonString(): String {
 }
 
 
-fun Chapter.toChunk(chunSize:Int=3000): List<ChapterByChunk> {
+fun Chapter.toChunk(chunSize:Int=2000): List<ChapterByChunk> {
     val chunks = content.chunked(chunSize)
     return chunks.mapIndexed { idx, chunk ->
         ChapterByChunk(

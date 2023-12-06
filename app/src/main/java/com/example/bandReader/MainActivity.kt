@@ -33,7 +33,6 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -49,16 +48,13 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FabPosition
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -90,12 +86,10 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import androidx.datastore.preferences.core.edit
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -121,30 +115,18 @@ import com.example.bandReader.util.FileUtils
 import com.permissionx.guolindev.PermissionX
 import com.xiaomi.xms.wearable.Wearable
 import com.xiaomi.xms.wearable.message.MessageApi
-import com.xiaomi.xms.wearable.message.OnMessageReceivedListener
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.decodeFromJsonElement
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.mozilla.universalchardet.UniversalDetector
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.nio.charset.Charset
-import java.nio.charset.CharsetDecoder
-import java.util.concurrent.CompletableFuture
-import kotlin.streams.toList
 
 
 val openDialog: MutableStateFlow<Boolean> = MutableStateFlow(false)
@@ -318,11 +300,6 @@ class MainActivity : AppCompatActivity() {
                         )
                     }
                     Column {
-                        Button(onClick = {
-                            coroutineScope.launch { mainViewModel.sendTestChunk() }
-                        }) {
-                            Text(text = "send")
-                        }
                         //日志
                         AnimatedVisibility(printState.value) {
                             Column(
@@ -763,6 +740,7 @@ class MainActivity : AppCompatActivity() {
         val syncState = mainViewModel.syncStatus.collectAsState(initial = SyncStatus.SyncDef)
         val currentBookState = mainViewModel.currentBookFlow.collectAsState()
         val chapterLoadingState = mainViewModel.chapterLoading.collectAsState()
+        val coroutineScope = rememberCoroutineScope()
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -798,7 +776,12 @@ class MainActivity : AppCompatActivity() {
                 ExtendedFloatingActionButton(
                     modifier = Modifier.height(40.dp),
                     containerColor = BtnColor,
-                    onClick = { mainViewModel.syncToBand(currentBookState.value!!.id) },
+                    onClick = {
+//                        mainViewModel.syncToBand(currentBookState.value!!.id)
+                        coroutineScope.launch(Dispatchers.IO) {
+                            mainViewModel.syncv2(currentBookState.value!!.id)
+                        }
+                    },
                     icon = {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
@@ -856,9 +839,9 @@ class MainActivity : AppCompatActivity() {
                                 delay(850)
                                 mainViewModel.chapterLoading.value = false
                                 mainViewModel.syncFlow.collectLatest {
-                                    val lastest = it.first
-                                    if (lastest < it.second) listState.scrollToItem(if (lastest > 2) lastest - 2 else lastest)
-                                    else listState.scrollToItem(lastest + 2)
+                                    val latest = it.first
+                                    if (latest < it.second) listState.scrollToItem(if (latest > 2) latest - 2 else latest)
+                                    else listState.scrollToItem(latest + 2)
                                 }
                             }
                         }

@@ -10,3 +10,8 @@ sealed class SyncStatus(
     data object SyncFail : SyncStatus("同步失败")
     data object SyncRe : SyncStatus("重新同步")
 }
+
+sealed class SyncType {
+    data object UnSync : SyncType()
+    data class Range(val start: Int, val end: Int) : SyncType()
+}
