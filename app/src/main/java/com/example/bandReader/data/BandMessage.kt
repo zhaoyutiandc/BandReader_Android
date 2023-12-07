@@ -23,4 +23,6 @@ sealed class BandMessage(
     data class ListInfo(var content: JsonObject) : BandMessage("list_info")
     @Serializable
     data class TestChunk(var content: JsonObject) : BandMessage("test_chunk")
+    @Serializable
+    data class Exit(var content: String = "") : BandMessage("exit")
 }

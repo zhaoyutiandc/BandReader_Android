@@ -102,11 +102,13 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     val avergeLengthFlow = MutableStateFlow(0)
     val messageFlow = MutableStateFlow("")
     var syncingList = false
-    var chapterList = listOf<Chapter>()
+    var chapterListFlow = MutableStateFlow<List<Chapter>>(emptyList())
 
     suspend fun getChapters(bookId: Int) {
         chapterLoading.value = true
-        chapters = appDatabase.chapterDao().getChaptersByBookId(bookId)
+        chapterListFlow.value = appDatabase.chapterDao().getChaptersByBookIdSync(bookId)
+//        delay(850)
+        chapterLoading.value = false
         syncFlow.value = Pair(
             appDatabase.chapterDao().countSynced(bookId),
             appDatabase.chapterDao().countChapterBy(bookId)
@@ -187,13 +189,10 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 }
             }
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            chapters.collectLatest { list ->
-                //计算章节name的平均文字数量
-                if (list.isEmpty()) return@collectLatest
-                avergeLengthFlow.value = list.map { it.name.length }.average().toInt()
-            }
-        }
+        /*viewModelScope.launch(Dispatchers.IO) {
+            if (chapterList.isEmpty()) return@launch
+            avergeLengthFlow.value = chapterList.map { it.name.length }.average().toInt()
+        }*/
         viewModelScope.launch(Dispatchers.IO) {
             messageFlow.collectLatest {
                 //消息接收
@@ -475,20 +474,37 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             }
 
             "chapter_saved" -> {
-                val savedIndex = data.jsonObject["content"]!!.jsonPrimitive.int
-                receiveFlow.value = "手环已接收章节 $savedIndex"
-                if (savedIndex == chapterList.last().index) {
-                    syncStatus.value = SyncStatus.SyncRe
-                    isSyncing.value = false
-                }
                 viewModelScope.launch(Dispatchers.IO) {
-                    //2秒以后如果没再次接收到chapter_saved 就调用retry
+                    val savedIndex = data.jsonObject["content"]!!.jsonPrimitive.int
+                    val curChapter =
+                        chapterListFlow.value.find { it.index == savedIndex } ?: return@launch
+                    viewModelScope.launch(Dispatchers.IO) {
+                        appDatabase.chapterDao()
+                            .update(
+                                curChapter.copy(sync = true)
+                            )
+                        syncFlow.value = syncFlow.value.copy(
+                            first = appDatabase.chapterDao()
+                                .countSynced(curChapter.bookId)
+                        )
+                    }
+                    /*var isRestart = false
+                    if (savedIndex>0&&savedIndex%100==0){
+                        restartBandApp()
+                        isRestart = true
+                    }
+                    receiveFlow.value = "手环已接收章节 $savedIndex"
+                    if (savedIndex == chapterList.last().index) {
+                        syncStatus.value = SyncStatus.SyncRe
+                        isSyncing.value = false
+                    }
                     syncNextChapter(savedIndex + 1)
+                    //2秒以后如果没再次接收到chapter_saved 就调用retry
                     sendTime = System.currentTimeMillis()
                     delay(2000)
                     val curTime = System.currentTimeMillis()
                     receiveFlow.value = "===间隔 ${curTime - sendTime}"
-                    if ((curTime - sendTime)>=2000) retry(savedIndex)
+                    if ((curTime - sendTime) >= 2000 && !isRestart) retry(savedIndex)*/
                 }
             }
 
@@ -617,14 +633,22 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         }
     }
 
-    suspend fun retry(index: Int){
+    suspend fun retry(index: Int) {
         launchBandApp()
-        delay(1000)
+        delay(1400)
         syncNextChapter(index)
     }
 
+    suspend fun restartBandApp() {
+        val msg = Json.encodeToString(BandMessage.Exit())
+        messageApi?.sendMessage(curNode!!.id, msg.toByteArray())
+        delay(200)
+        launchBandApp()
+        delay(1400)
+    }
+
     suspend fun syncNextChapter(index: Int) {
-        Log.e("TAG", "syncNextChapter: $index ${Date()}" )
+        Log.e("TAG", "syncNextChapter: $index ${Date()}")
         receiveFlow.value = "进入syncNextChapter $index"
         syncStatus.value = SyncStatus.Syncing
         isSyncing.value = true
@@ -636,7 +660,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             }
         }*/
 
-        val curChapter = chapterList.find { it.index == index } ?: return
+        val curChapter = chapterListFlow.value.find { it.index == index } ?: return
         receiveFlow.value = "找到curChapter $index"
         curChapter.toChunk(5000).forEachIndexed { chunkIdx, chapterByChunk ->
             val future = CompletableFuture<Boolean>()
@@ -647,9 +671,10 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             //receiveFlow.value = "发送 chapterByChunk | temp : $temp | temp json $chapterMsg"
             messageApi?.sendMessage(curNode!!.id, chapterMsg.toByteArray())
                 ?.addOnSuccessListener {
-                    receiveFlow.value = "发送 chapterByChunk ${temp.bookId}/${temp.paging}/${index}_${temp.name}"
+                    receiveFlow.value =
+                        "发送 chapterByChunk ${temp.bookId}/${temp.paging}/${index}_${temp.name}"
                     //如果两秒后
-                    viewModelScope.launch(Dispatchers.IO){
+                    viewModelScope.launch(Dispatchers.IO) {
                         delay(60)
                         future.complete(true)
                     }
@@ -671,11 +696,11 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         }
         syncChapterInfo(bookId)
         if (syncType is SyncType.UnSync) {
-            chapterList = appDatabase.chapterDao().getUnSyncChapters(bookId)
-            syncNextChapter(100)
+            chapterListFlow.value = appDatabase.chapterDao().getUnSyncChapters(bookId)
+            syncNextChapter(0)
         } else if (syncType is SyncType.Range) {
             //按范围过滤章节
-            chapterList = appDatabase.chapterDao().getChapterByBookIdAndIndexRange(
+            chapterListFlow.value = appDatabase.chapterDao().getChapterByBookIdAndIndexRange(
                 bookId,
                 syncType.start,
                 syncType.end
@@ -684,168 +709,167 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         }
     }
 
-    fun syncToBand(bookId: Int) = viewModelScope.launch(Dispatchers.IO) {
-        when (syncStatus.value) {
-            SyncStatus.SyncRe -> syncStatus.value = SyncStatus.Syncing
-                .also { isSyncing.value = true }
-                .also { cancelSync = false }
+    fun syncToBand(bookId: Int, syncType: SyncType = SyncType.UnSync) =
+        viewModelScope.launch(Dispatchers.IO) {
+            when (syncStatus.value) {
+                SyncStatus.SyncRe -> syncStatus.value = SyncStatus.Syncing
+                    .also { isSyncing.value = true }
+                    .also { cancelSync = false }
 
-            SyncStatus.Syncing -> {
-                cancelSync = true
-                syncStatus.value = SyncStatus.SyncDef.also { isSyncing.value = false }
+                SyncStatus.Syncing -> {
+                    cancelSync = true
+                    syncStatus.value = SyncStatus.SyncDef.also { isSyncing.value = false }
+                    return@launch
+                }
+
+                SyncStatus.SyncDef -> syncStatus.value =
+                    SyncStatus.Syncing
+                        .also { cancelSync = false }
+                        .also { isSyncing.value = true }
+
+                else -> {}
+            }
+            if (!launchBandApp()) {
                 return@launch
             }
-
-            SyncStatus.SyncDef -> syncStatus.value =
-                SyncStatus.Syncing
-                    .also { cancelSync = false }
-                    .also { isSyncing.value = true }
-
-            else -> {}
-        }
-        if (!launchBandApp()) {
-            return@launch
-        }
-        var syncJob: Job? = null
-        if (hasGrantedFlow.value) {
-            isSyncing.value = true
-            syncStatus.value = SyncStatus.Syncing
-            val book = appDatabase.bookDao().getBookById(bookId)
-            receiveFlow.value = "syncToBand"
-            if (syncFlow.value.first == syncFlow.value.second) {
+            var syncJob: Job? = null
+            if (hasGrantedFlow.value) {
+                isSyncing.value = true
+                syncStatus.value = SyncStatus.Syncing
+                val book = appDatabase.bookDao().getBookById(bookId)
+                receiveFlow.value = "syncToBand"
+                if (syncFlow.value.first == syncFlow.value.second) {
 //                syncStatus.value = SyncStatus.SyncRe
-                appDatabase.chapterDao().setAllUnSync(bookId)
-                syncFlow.value = Pair(
-                    appDatabase.chapterDao().countSynced(bookId),
-                    appDatabase.chapterDao().countChapterBy(bookId)
-                )
-            }
+                    appDatabase.chapterDao().setAllUnSync(bookId)
+                    syncFlow.value = Pair(
+                        appDatabase.chapterDao().countSynced(bookId),
+                        appDatabase.chapterDao().countChapterBy(bookId)
+                    )
+                }
 
-            book?.let {
-                receiveFlow.value = "syncToBand $book"
-                appDatabase.bookDao().update(book.copy(synced = true))
-                val msg = Json.encodeToString(BandMessage.AddBook(book))
-                messageApi?.sendMessage(
-                    curNode!!.id, msg.toByteArray()
-                )?.addOnSuccessListener {
-                    var count = 0
-                    receiveFlow.value = "syncToBand book added"
-                    syncJob = viewModelScope.launch(Dispatchers.IO) {
-                        receiveFlow.value =
-                            "send chapters ${appDatabase.chapterDao().countUnSynced(bookId)}"
-                        if (appDatabase.chapterDao()
-                                .countUnSynced(bookId) == appDatabase.chapterDao()
-                                .countChapterBy(bookId)
-                        ) {
-                            receiveFlow.value = "开始同步章节列表"
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(
-                                    appContext,
-                                    "开始同步章节列表",
-                                    Toast.LENGTH_SHORT
-                                )
-                                    .show()
-                            }
-                            listInfo(
-                                bookId,
-                                appDatabase.chapterDao().getChaptersByBookIdSync(bookId)
-                            )
-                            receiveFlow.value = "同步章节列表完成"
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(
-                                    appContext,
-                                    "同步章节列表完成",
-                                    Toast.LENGTH_SHORT
-                                )
-                                    .show()
-                            }
-                            delay(1000)
-                        }
-                        appDatabase.chapterDao().getUnSyncChapters(bookId)
-                            .map { it.toChunk(5000) }
-                            .flatten()
-                            .forEach loop@{ chapterByChunk ->
-                                if (cancelSync) {
-                                    syncStatus.value = SyncStatus.SyncDef
-                                    return@loop
+                book?.let {
+                    receiveFlow.value = "syncToBand $book"
+                    appDatabase.bookDao().update(book.copy(synced = true))
+                    val msg = Json.encodeToString(BandMessage.AddBook(book))
+                    messageApi?.sendMessage(
+                        curNode!!.id, msg.toByteArray()
+                    )?.addOnSuccessListener {
+                        var count = 0
+                        receiveFlow.value = "syncToBand book added"
+                        syncJob = viewModelScope.launch(Dispatchers.IO) {
+                            receiveFlow.value =
+                                "send chapters ${appDatabase.chapterDao().countUnSynced(bookId)}"
+                            if (appDatabase.chapterDao()
+                                    .countUnSynced(bookId) == appDatabase.chapterDao()
+                                    .countChapterBy(bookId)
+                            ) {
+                                receiveFlow.value = "开始同步章节列表"
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(
+                                        appContext,
+                                        "开始同步章节列表",
+                                        Toast.LENGTH_SHORT
+                                    )
+                                        .show()
                                 }
-                                //如果chapter的index 是10的倍数就发送一次launchbandapp
-                                if (chapterByChunk.index % 20 == 0) {
-                                    launchBandApp().let {
-                                        if (!it) {
-                                            syncStatus.value = SyncStatus.SyncDef
-                                            return@loop
+                                listInfo(
+                                    bookId,
+                                    appDatabase.chapterDao().getChaptersByBookIdSync(bookId)
+                                )
+                                receiveFlow.value = "同步章节列表完成"
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(
+                                        appContext,
+                                        "同步章节列表完成",
+                                        Toast.LENGTH_SHORT
+                                    )
+                                        .show()
+                                }
+                                delay(1000)
+                            }
+                            /*chapterListFlow.value = appDatabase.chapterDao().getChaptersByBookIdSync(bookId)*/
+                            chapterListFlow.value.filter { !it.sync }
+                                .map { it.toChunk(5000) }
+                                .flatten()
+                                .forEach loop@{ chapterByChunk ->
+                                    if (cancelSync) {
+                                        syncStatus.value = SyncStatus.SyncDef
+                                        return@loop
+                                    }
+                                    //如果chapter的index 是10的倍数就发送一次launchbandapp
+                                    if (chapterByChunk.index % 20 == 0) {
+                                        launchBandApp().let {
+                                            if (!it) {
+                                                syncStatus.value = SyncStatus.SyncDef
+                                                return@loop
+                                            }
                                         }
                                     }
-                                }
-                                syncStatus.value = SyncStatus.Syncing
-                                val future = CompletableFuture<Boolean>()
-                                val format = Json { encodeDefaults = true }
-                                val chapterMsg =
-                                    format.encodeToString(BandMessage.AddChapter(chapterByChunk))
-                                messageApi?.sendMessage(curNode!!.id, chapterMsg.toByteArray())
-                                    ?.addOnSuccessListener {
-                                        viewModelScope.launch {
-                                            withContext(Dispatchers.Main) {
-                                                Toast.makeText(
-                                                    appContext,
-                                                    "发送完成 ${chapterByChunk.id} ${chapterByChunk.index}章",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
+                                    syncStatus.value = SyncStatus.Syncing
+                                    val future = CompletableFuture<Boolean>()
+                                    val format = Json { encodeDefaults = true }
+                                    val chapterMsg =
+                                        format.encodeToString(BandMessage.AddChapter(chapterByChunk))
+                                    messageApi?.sendMessage(curNode!!.id, chapterMsg.toByteArray())
+                                        ?.addOnSuccessListener {
+                                            viewModelScope.launch {
+                                                /*withContext(Dispatchers.Main) {
+                                                    Toast.makeText(
+                                                        appContext,
+                                                        "发送完成 ${chapterByChunk.id} ${chapterByChunk.index}章",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }*/
+                                                /*if (chapterByChunk.last) {
+                                                    appDatabase.chapterDao()
+                                                        .update(
+                                                            chapterByChunk.raw!!.copy(sync = true)
+                                                        )
+                                                    syncFlow.value = syncFlow.value.copy(
+                                                        first = appDatabase.chapterDao()
+                                                            .countSynced(chapterByChunk.bookId)
+                                                    )
+                                                }*/
+                                                syncFail = false
+                                                future.complete(true)
                                             }
-                                            if (chapterByChunk.last) {
+                                        }?.addOnFailureListener {
+                                            syncStatus.value = SyncStatus.SyncFail
+                                            Log.e(
+                                                "TAG",
+                                                "send chapter err ${it.stackTraceToString()}"
+                                            )
+                                            viewModelScope.launch(Dispatchers.IO) {
                                                 appDatabase.chapterDao()
                                                     .update(
-                                                        chapterByChunk.raw!!.copy(sync = true)
+                                                        chapterByChunk.raw!!.copy(sync = false)
                                                     )
-                                                syncFlow.value = syncFlow.value.copy(
-                                                    first = appDatabase.chapterDao()
-                                                        .countSynced(chapterByChunk.bookId)
-                                                )
                                             }
-                                            syncFail = false
-                                            future.complete(true)
+                                            cancelSync = true
+                                            syncFail = true
+                                            future.complete(false)
                                         }
-                                    }?.addOnFailureListener {
+                                    if (!future.await()) {
                                         syncStatus.value = SyncStatus.SyncFail
-                                        Log.e(
-                                            "TAG",
-                                            "send chapter err ${it.stackTraceToString()}"
-                                        )
-                                        viewModelScope.launch(Dispatchers.IO) {
-                                            appDatabase.chapterDao()
-                                                .update(
-                                                    chapterByChunk.raw!!.copy(sync = false)
-                                                )
-                                        }
-                                        cancelSync = true
-                                        syncFail = true
-                                        future.complete(false)
+                                        return@loop
+                                    } else if (chapterByChunk.last && chapterByChunk.index == book.chapters - 1) {
+                                        syncStatus.value = SyncStatus.SyncRe
+                                        isSyncing.value = false
                                     }
-                                if (!future.await()) {
-                                    syncStatus.value = SyncStatus.SyncFail
-                                    return@loop
-                                } else if (chapterByChunk.last && chapterByChunk.index == book.chapters - 1) {
-                                    syncStatus.value = SyncStatus.SyncRe
-                                    isSyncing.value = false
+                                    if (chapterByChunk.content.length < 1000) {
+                                        delay(60)
+                                    } else {
+                                        delay(140)
+                                    }
                                 }
-                                receiveFlow.value = "到达wait"
-                                sendLock.await()
-                                sendLock = CompletableFuture<Boolean>()
-                                /*if (chapterByChunk.content.length < 1000) {
-                                    delay(60)
-                                } else {
-                                    delay(140)
-                                }*/
-                            }
+                        }
+                    }?.addOnFailureListener {
+                        syncStatus.value = SyncStatus.SyncFail
+                        isSyncing.value = false
                     }
-                }?.addOnFailureListener {
-                    syncStatus.value = SyncStatus.SyncFail
-                    isSyncing.value = false
                 }
             }
         }
-    }
 
     fun changeBook(book: Book, cover: Bitmap? = null) = viewModelScope.launch(Dispatchers.IO) {
         appDatabase.bookDao().update(book)

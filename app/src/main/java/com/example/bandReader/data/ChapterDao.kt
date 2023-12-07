@@ -22,6 +22,8 @@ interface ChapterDao {
     fun getChaptersByBookId(bookId: Int): Flow<List<Chapter>>
     @Query("SELECT * FROM chapter WHERE bookId = :bookId order by `index`")
     fun getChaptersByBookIdSync(bookId: Int): List<Chapter>
+    /*@Query("SELECT id,`index`,bookId,bookId,name,paging,sync,list FROM chapter WHERE bookId = :bookId order by `index`")
+    fun getChaptersByBookIdSyncWithoutContent(bookId: Int): List<Chapter>*/
     //un sync chapters
     @Query("SELECT * FROM chapter WHERE bookId = :bookId and sync = 0")
     suspend fun getUnSyncChapters(bookId:Int): List<Chapter>

@@ -380,9 +380,7 @@ class MainActivity : AppCompatActivity() {
                             composable("detail",
                                 enterTransition = { animation.first },
                                 exitTransition = { animation.second }) {
-                                DetailScreen(
-                                    mainViewModel.chapters,
-                                )
+                                DetailScreen()
                             }
                         }
                     }
@@ -734,9 +732,8 @@ class MainActivity : AppCompatActivity() {
     @OptIn(FlowPreview::class)
     @Composable
     fun DetailScreen(
-        chapters: Flow<List<Chapter>>,
     ) {
-        val chaptersState = chapters.collectAsState(initial = emptyList())
+        val chaptersState = mainViewModel.chapterListFlow.collectAsState(initial = emptyList())
         val syncState = mainViewModel.syncStatus.collectAsState(initial = SyncStatus.SyncDef)
         val currentBookState = mainViewModel.currentBookFlow.collectAsState()
         val chapterLoadingState = mainViewModel.chapterLoading.collectAsState()
@@ -777,10 +774,10 @@ class MainActivity : AppCompatActivity() {
                     modifier = Modifier.height(40.dp),
                     containerColor = BtnColor,
                     onClick = {
-//                        mainViewModel.syncToBand(currentBookState.value!!.id)
-                        coroutineScope.launch(Dispatchers.IO) {
+                        mainViewModel.syncToBand(currentBookState.value!!.id)
+                        /*coroutineScope.launch(Dispatchers.IO) {
                             mainViewModel.syncv2(currentBookState.value!!.id)
-                        }
+                        }*/
                     },
                     icon = {
                         Icon(
@@ -805,7 +802,6 @@ class MainActivity : AppCompatActivity() {
             val listState = rememberLazyListState()
             // Remember a CoroutineScope to be able to launch
             val coroutineScope = rememberCoroutineScope()
-            val avergeLengthState = mainViewModel.avergeLengthFlow.collectAsState()
             var toTop by remember { mutableStateOf(false) }
             var isCollecting by remember { mutableStateOf(false) }
             val rendered by remember {
@@ -836,8 +832,6 @@ class MainActivity : AppCompatActivity() {
                             coroutineScope.launch {
                                 mainViewModel.receiveFlow.value = "coroutineScope launch"
                                 isCollecting = true
-                                delay(850)
-                                mainViewModel.chapterLoading.value = false
                                 mainViewModel.syncFlow.collectLatest {
                                     val latest = it.first
                                     if (latest < it.second) listState.scrollToItem(if (latest > 2) latest - 2 else latest)
