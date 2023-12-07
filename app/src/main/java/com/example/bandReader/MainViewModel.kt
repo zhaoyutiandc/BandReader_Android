@@ -42,7 +42,9 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.time.withTimeout
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -55,6 +57,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
+import java.util.Date
 import java.util.concurrent.CompletableFuture
 import javax.inject.Inject
 
@@ -100,7 +103,6 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     val messageFlow = MutableStateFlow("")
     var syncingList = false
     var chapterList = listOf<Chapter>()
-
 
     suspend fun getChapters(bookId: Int) {
         chapterLoading.value = true
@@ -178,7 +180,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                     add(0, it)
                 }
 //                printArr去重
-                printArr.value = printArr.value.distinct()
+//                printArr.value = printArr.value.distinct()
                 //如果printarr的长度大于就删除最后一个
                 if (printArr.value.size > 200) {
                     printArr.value = printArr.value.dropLast(1)
@@ -389,6 +391,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     }
 
     var sendLock = CompletableFuture<Boolean>()
+    var sendTime = 0L
     fun handleMessage(message: String) {
         receiveFlow.value = "handleMessage $message"
         if (message.isEmpty() || message.isBlank() || message == "null") return
@@ -479,8 +482,13 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                     isSyncing.value = false
                 }
                 viewModelScope.launch(Dispatchers.IO) {
-//                    delay(40)
+                    //2秒以后如果没再次接收到chapter_saved 就调用retry
                     syncNextChapter(savedIndex + 1)
+                    sendTime = System.currentTimeMillis()
+                    delay(2000)
+                    val curTime = System.currentTimeMillis()
+                    receiveFlow.value = "===间隔 ${curTime - sendTime}"
+                    if ((curTime - sendTime)>=2000) retry(savedIndex)
                 }
             }
 
@@ -609,7 +617,14 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         }
     }
 
+    suspend fun retry(index: Int){
+        launchBandApp()
+        delay(1000)
+        syncNextChapter(index)
+    }
+
     suspend fun syncNextChapter(index: Int) {
+        Log.e("TAG", "syncNextChapter: $index ${Date()}" )
         receiveFlow.value = "进入syncNextChapter $index"
         syncStatus.value = SyncStatus.Syncing
         isSyncing.value = true
@@ -623,20 +638,21 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
 
         val curChapter = chapterList.find { it.index == index } ?: return
         receiveFlow.value = "找到curChapter $index"
-        curChapter.toChunk().forEachIndexed { chunkIdx, chapterByChunk ->
+        curChapter.toChunk(5000).forEachIndexed { chunkIdx, chapterByChunk ->
             val future = CompletableFuture<Boolean>()
             receiveFlow.value = "进入forEach index $index chunkIdx $chunkIdx"
             val temp = chapterByChunk.copy(raw = null)
-            if (index == 243){
-                temp.content = "第243章 你好"
-            }
             val chapterMsg =
                 format.encodeToString(BandMessage.AddChapter(temp))
             //receiveFlow.value = "发送 chapterByChunk | temp : $temp | temp json $chapterMsg"
             messageApi?.sendMessage(curNode!!.id, chapterMsg.toByteArray())
                 ?.addOnSuccessListener {
                     receiveFlow.value = "发送 chapterByChunk ${temp.bookId}/${temp.paging}/${index}_${temp.name}"
-                    future.complete(true)
+                    //如果两秒后
+                    viewModelScope.launch(Dispatchers.IO){
+                        delay(60)
+                        future.complete(true)
+                    }
                 }
                 ?.addOnFailureListener {
                     receiveFlow.value = "发送 chapterByChunk err ${it.message}"
@@ -656,7 +672,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         syncChapterInfo(bookId)
         if (syncType is SyncType.UnSync) {
             chapterList = appDatabase.chapterDao().getUnSyncChapters(bookId)
-            syncNextChapter(0)
+            syncNextChapter(100)
         } else if (syncType is SyncType.Range) {
             //按范围过滤章节
             chapterList = appDatabase.chapterDao().getChapterByBookIdAndIndexRange(
