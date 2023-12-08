@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -733,7 +734,7 @@ class MainActivity : AppCompatActivity() {
     @Composable
     fun DetailScreen(
     ) {
-        val chaptersState = mainViewModel.chapterListFlow.collectAsState(initial = emptyList())
+        val chaptersState = mainViewModel.chapters.collectAsState(initial = emptyList())
         val syncState = mainViewModel.syncStatus.collectAsState(initial = SyncStatus.SyncDef)
         val currentBookState = mainViewModel.currentBookFlow.collectAsState()
         val chapterLoadingState = mainViewModel.chapterLoading.collectAsState()
@@ -774,10 +775,10 @@ class MainActivity : AppCompatActivity() {
                     modifier = Modifier.height(40.dp),
                     containerColor = BtnColor,
                     onClick = {
-                        mainViewModel.syncToBand(currentBookState.value!!.id)
-                        /*coroutineScope.launch(Dispatchers.IO) {
+//                        mainViewModel.syncToBand(currentBookState.value!!.id)
+                        coroutineScope.launch(Dispatchers.IO) {
                             mainViewModel.syncv2(currentBookState.value!!.id)
-                        }*/
+                        }
                     },
                     icon = {
                         Icon(
