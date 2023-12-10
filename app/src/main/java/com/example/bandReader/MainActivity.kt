@@ -253,6 +253,7 @@ class MainActivity : AppCompatActivity() {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 mainViewModel.restartFlow.collect {
                     if (it) {
+                        delay(1000)
                         restart()
                     }
                 }
@@ -1085,7 +1086,8 @@ class MainActivity : AppCompatActivity() {
             lines.add(tempStr.toString())
             val matches = lines.count { regex.matches(it) }
             lines = lines.filter { it.isNotBlank() }.toMutableList()
-            if (lines.size > 1 || (matches < 10)) {
+            //v1
+            /*if (lines.size > 0 || (matches < 1)) {
                 val tempLines = mutableListOf<String>()
                 lines.chunked(50).forEachIndexed { idx, it ->
                     chapters.add(Pair("第${idx + 1}部分", it.joinToString("\n")))
@@ -1112,10 +1114,41 @@ class MainActivity : AppCompatActivity() {
                 if (temp.second.isNotBlank()) {
                     chapters.add(temp)
                 }
+            }*/
+            //v2
+            var chunkCounter = 1
+            var rawTitle = ""
+            lines.forEachIndexed { index, s ->
+                if (index == 0 && regex.matches(s)) {
+                    temp = temp.copy(first = s.replace("=", ""))
+                }
+                if (regex.matches(s)) {
+                    rawTitle = s.replace("=", "")
+                    chunkCounter = 1
+                    if (chapters.size > 0) {
+                        chapters.add(temp)
+                        temp = temp.copy(first = s.replace("=", ""), second = "")
+                    }
+                } else {
+                    temp = temp.copy(second = temp.second + s + "\n")
+
+                    if (temp.second.length > 5000) {
+                        chapters.add(temp)
+                        temp = temp.copy(second = "")
+                        if (temp.first == "开始") {
+                            temp = temp.copy(first = "")
+                        }
+                        else temp = temp.copy(first = rawTitle + " 第${++chunkCounter}部分")
+                    }
+                }
             }
+            if (temp.second.isNotBlank()) {
+                chapters.add(temp)
+            }
+
             mainViewModel.receiveFlow.value = "读取完毕"
             inputStream?.close()
-            chapters = chapters.filter { it.second.length > 50 }.toMutableList()
+            chapters = chapters.filter { it.second.length > 0 }.toMutableList()
             val chapterEntity = chapters.mapIndexed { index, it ->
                 Chapter(
                     index = index,

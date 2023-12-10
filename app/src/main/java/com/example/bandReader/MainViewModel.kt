@@ -105,15 +105,15 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     var chapterListFlow = MutableStateFlow<List<Chapter>>(emptyList())
 
     suspend fun getChapters(bookId: Int) {
+        syncFlow.value = Pair(
+            appDatabase.chapterDao().countSynced(bookId),
+            appDatabase.chapterDao().countChapterBy(bookId)
+        )
         chapters = appDatabase.chapterDao().getChaptersByBookId(bookId)
         chapterLoading.value = true
         chapterListFlow.value = appDatabase.chapterDao().getChaptersByBookIdSync(bookId)
 //        delay(850)
         chapterLoading.value = false
-        syncFlow.value = Pair(
-            appDatabase.chapterDao().countSynced(bookId),
-            appDatabase.chapterDao().countChapterBy(bookId)
-        )
         receiveFlow.value =
             "syncFlow.value.first == syncFlow.value.second ${syncFlow.value.first} ${syncFlow.value.second} ${syncFlow.value.first == syncFlow.value.second}"
         if (syncFlow.value.first == syncFlow.value.second) {
@@ -238,8 +238,9 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             receiveFlow.value = "手环应用未就绪"
             hasGrantedFlow.value = false
             hasListener = false
-            val mainActivity = appContext as MainActivity
-            mainActivity.restart()
+            if (syncStatus.value == SyncStatus.Syncing) {
+                restartFlow.value = true
+            }
         }
         return isReady
     }
@@ -496,37 +497,23 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                         first = appDatabase.chapterDao()
                             .countSynced(curChapter.bookId)
                     )
-                    syncNextChapter(savedIndex + 1)
 
-                    sendTime = System.currentTimeMillis()
-                    delay(2000)
-                    val curTime = System.currentTimeMillis()
-                    receiveFlow.value = "===间隔 ${curTime - sendTime}"
-                    if ((curTime - sendTime) >= 2000) retry(savedIndex)
-
-                    /*sendTime = System.currentTimeMillis()
-                    delay(2000)
-                    val curTime = System.currentTimeMillis()
-                    receiveFlow.value = "===间隔 ${curTime - sendTime}"
-                    if ((curTime - sendTime) >= 2000 ) retry(savedIndex)
-                    else syncNextChapter(savedIndex + 1)*/
-                    /*var isRestart = false
-                    if (savedIndex>0&&savedIndex%100==0){
-                        restartBandApp()
-                        isRestart = true
-                    }
-                    receiveFlow.value = "手环已接收章节 $savedIndex"
-                    if (savedIndex == chapterList.last().index) {
+                    //如果是最后一章 就不再同步下一章
+                    if (savedIndex == chapterListFlow.value.last().index) {
                         syncStatus.value = SyncStatus.SyncRe
                         isSyncing.value = false
+                        return@launch
                     }
-                    syncNextChapter(savedIndex + 1)
-                    //2秒以后如果没再次接收到chapter_saved 就调用retry
-                    sendTime = System.currentTimeMillis()
-                    delay(2000)
-                    val curTime = System.currentTimeMillis()
-                    receiveFlow.value = "===间隔 ${curTime - sendTime}"
-                    if ((curTime - sendTime) >= 2000 && !isRestart) retry(savedIndex)*/
+                    if (!cancelSync) {
+                        syncNextChapter(savedIndex + 1)
+                        sendTime = System.currentTimeMillis()
+                        delay(2000)
+                        val curTime = System.currentTimeMillis()
+                        receiveFlow.value = "===间隔 ${curTime - sendTime}"
+                        if ((curTime - sendTime) >= 2000 && savedIndex != chapterListFlow.value.last().index && !cancelSync && syncStatus.value!=SyncStatus.SyncRe) retry(
+                            savedIndex
+                        )
+                    }
                 }
             }
 
@@ -699,9 +686,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 ?.addOnSuccessListener {
                     receiveFlow.value =
                         "发送 chapterByChunk ${temp.bookId}/${temp.paging}/${index}_${temp.name}"
-                    viewModelScope.launch(Dispatchers.IO) {
-                        future.complete(true)
-                    }
+                    future.complete(true)
                 }
                 ?.addOnFailureListener {
                     receiveFlow.value = "发送 chapterByChunk err ${it.message}"
@@ -715,19 +700,28 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     }
 
     suspend fun syncv2(bookId: Int, syncType: SyncType = SyncType.UnSync) {
+        if (syncStatus.value is SyncStatus.Syncing){
+            cancelSync = true
+            syncStatus.value = SyncStatus.SyncDef
+            return
+        }
+
         if (!syncBook(bookId)) {
             receiveFlow.value = "syncBook err"
             return
         }
         syncChapterInfo(bookId)
+
         if (syncType is SyncType.UnSync) {
-            chapterListFlow.value = appDatabase.chapterDao().getUnSyncChapters(bookId)
             //chapterListFlow.value中第一个sync是false的
-            val firstUnSync = chapterListFlow.value.find { !it.sync }
-            if (firstUnSync == null) {
+            if (syncStatus.value is SyncStatus.SyncRe) {
                 receiveFlow.value = "firstUnSync is null"
-                return
-            } else {
+                appDatabase.chapterDao().setAllUnSync(bookId)
+            }
+            //421 241
+            chapterListFlow.value = appDatabase.chapterDao().getUnSyncChapters(bookId)
+            val firstUnSync = chapterListFlow.value.find { !it.sync }
+            if (firstUnSync != null) {
                 syncNextChapter(firstUnSync.index)
             }
         } else if (syncType is SyncType.Range) {
