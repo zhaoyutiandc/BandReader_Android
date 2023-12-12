@@ -1136,7 +1136,7 @@ class MainActivity : AppCompatActivity() {
                         chapters.add(temp)
                         temp = temp.copy(second = "")
                         if (temp.first == "开始") {
-                            temp = temp.copy(first = "")
+                            temp = temp.copy(first = "第1部分")
                         }
                         else temp = temp.copy(first = rawTitle + " 第${++chunkCounter}部分")
                     }
