@@ -23,11 +23,12 @@ fun Title(
     str: String,
     subStr: String? = null,
     subOffset: Dp = 0.dp,
+    click: () -> Unit = {},
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
 ) {
     Column(
         modifier.combinedClickable(
-            onClick = {},
+            onClick = click,
             onLongClick = { printState.value = !printState.value }
         )
     ) {

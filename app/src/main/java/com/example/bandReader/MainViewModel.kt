@@ -16,6 +16,8 @@ import com.example.bandReader.data.Chapter
 import com.example.bandReader.data.Cover
 import com.example.bandReader.data.SyncStatus
 import com.example.bandReader.data.SyncType
+import com.example.bandReader.data.ChapterWithoutContent
+import com.example.bandReader.data.getRaw
 import com.example.bandReader.data.toChunk
 import com.xiaomi.xms.wearable.Status
 import com.xiaomi.xms.wearable.Wearable
@@ -42,9 +44,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.time.withTimeout
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -72,7 +72,8 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     private var hasListener = false
     var cancelSync = false
     var books = appDatabase.bookDao().getAllFlow()
-    var chapters: Flow<List<Chapter>> = flow { }
+
+    //    var chapters: Flow<List<Chapter>> = flow { }
     private var nodeApi: NodeApi? = null
     var curNode: Node? = null
     var messageApi: MessageApi? = null
@@ -102,16 +103,16 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     val avergeLengthFlow = MutableStateFlow(0)
     val messageFlow = MutableStateFlow("")
     var syncingList = false
-    var chapterListFlow = MutableStateFlow<List<Chapter>>(emptyList())
+    var chapterListFlow = MutableStateFlow<List<ChapterWithoutContent>>(emptyList())
 
     suspend fun getChapters(bookId: Int) {
         syncFlow.value = Pair(
             appDatabase.chapterDao().countSynced(bookId),
             appDatabase.chapterDao().countChapterBy(bookId)
         )
-        chapters = appDatabase.chapterDao().getChaptersByBookId(bookId)
+//        chapters = appDatabase.chapterDao().getChaptersByBookId(bookId)
         chapterLoading.value = true
-        chapterListFlow.value = appDatabase.chapterDao().getChaptersByBookIdSync(bookId)
+        chapterListFlow.value = appDatabase.chapterDao().getChaptersWithoutContent(bookId)
 //        delay(850)
         chapterLoading.value = false
         receiveFlow.value =
@@ -436,7 +437,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                 listInfo(
                                     bookId = jbook.id,
                                     chapters = appDatabase.chapterDao()
-                                        .getChaptersByBookIdSync(jbook.id)
+                                        .getChaptersWithoutContent(jbook.id)
                                 )
                                 delay(1000)
                                 syncingList = false
@@ -478,6 +479,10 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 }
             }
 
+            "test_saved" -> {
+
+            }
+
             "chunk_saved" -> {
                 sendLock.complete(true)
                 receiveFlow.value = "手环已接收chunk"
@@ -487,8 +492,9 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             "chapter_saved" -> {
                 viewModelScope.launch(Dispatchers.IO) {
                     val savedIndex = data.jsonObject["content"]!!.jsonPrimitive.int
-                    val curChapter =
+                    val chapterWithoutContent =
                         chapterListFlow.value.find { it.index == savedIndex } ?: return@launch
+                    val curChapter = appDatabase.chapterDao().getOneById(chapterWithoutContent.id)
                     appDatabase.chapterDao()
                         .update(
                             curChapter.copy(sync = true)
@@ -510,7 +516,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                         delay(2000)
                         val curTime = System.currentTimeMillis()
                         receiveFlow.value = "===间隔 ${curTime - sendTime}"
-                        if ((curTime - sendTime) >= 2000 && savedIndex != chapterListFlow.value.last().index && !cancelSync && syncStatus.value!=SyncStatus.SyncRe) retry(
+                        if ((curTime - sendTime) >= 2000 && savedIndex != chapterListFlow.value.last().index && !cancelSync && syncStatus.value != SyncStatus.SyncRe) retry(
                             savedIndex
                         )
                     }
@@ -527,7 +533,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         }
     }
 
-    suspend fun listInfo(bookId: Int, chapters: List<Chapter>) {
+    suspend fun listInfo(bookId: Int, chapters: List<ChapterWithoutContent>) {
         delay(140)
         //json arrar
         Log.i("TAG", "listInfo: ${chapters.size}")
@@ -609,6 +615,16 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         return future.await()
     }
 
+    suspend fun syncTest() {
+        //50万个 ‘啊’
+        val largeString = "啊".repeat(500000)
+        //5000个一个chunk
+        val chunks = largeString.chunked(5000)
+        chunks.forEach { chunk ->
+
+        }
+    }
+
     suspend fun syncChapterInfo(bookId: Int) {
         receiveFlow.value =
             "send chapters ${appDatabase.chapterDao().countUnSynced(bookId)}"
@@ -627,7 +643,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             }
             listInfo(
                 bookId,
-                appDatabase.chapterDao().getChaptersByBookIdSync(bookId)
+                appDatabase.chapterDao().getChaptersWithoutContent(bookId)
             )
             receiveFlow.value = "同步章节列表完成"
             withContext(Dispatchers.Main) {
@@ -669,7 +685,9 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
             }
         }*/
 
-        val curChapter = chapterListFlow.value.find { it.index == index }
+        val chapterWithoutContent =
+            chapterListFlow.value.find { it.index == index }
+        val curChapter = appDatabase.chapterDao().getOneById(chapterWithoutContent!!.id)
         if (curChapter == null) {
             receiveFlow.value = "找不到curChapter $index"
             return
@@ -700,7 +718,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     }
 
     suspend fun syncv2(bookId: Int, syncType: SyncType = SyncType.UnSync) {
-        if (syncStatus.value is SyncStatus.Syncing){
+        if (syncStatus.value is SyncStatus.Syncing) {
             cancelSync = true
             syncStatus.value = SyncStatus.SyncDef
             return
@@ -719,19 +737,18 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 appDatabase.chapterDao().setAllUnSync(bookId)
             }
             //421 241
-            chapterListFlow.value = appDatabase.chapterDao().getUnSyncChapters(bookId)
+            chapterListFlow.value = appDatabase.chapterDao().getChaptersWithoutContent(bookId)
             val firstUnSync = chapterListFlow.value.find { !it.sync }
             if (firstUnSync != null) {
                 syncNextChapter(firstUnSync.index)
             }
         } else if (syncType is SyncType.Range) {
             //按范围过滤章节
-            chapterListFlow.value = appDatabase.chapterDao().getChapterByBookIdAndIndexRange(
-                bookId,
-                syncType.start,
-                syncType.end
-            )
-            syncNextChapter(syncType.start)
+            /*chapterListFlow.value = appDatabase.chapterDao().getChaptersWithoutContent(bookId)
+                .filter {
+                    return it.index
+                }
+            syncNextChapter(syncType.start)*/
         }
     }
 
@@ -800,7 +817,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                                 }
                                 listInfo(
                                     bookId,
-                                    appDatabase.chapterDao().getChaptersByBookIdSync(bookId)
+                                    appDatabase.chapterDao().getChaptersWithoutContent(bookId)
                                 )
                                 receiveFlow.value = "同步章节列表完成"
                                 withContext(Dispatchers.Main) {
@@ -815,7 +832,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                             }
                             /*chapterListFlow.value = appDatabase.chapterDao().getChaptersByBookIdSync(bookId)*/
                             chapterListFlow.value.filter { !it.sync }
-                                .map { it.toChunk() }
+                                .map { it.getRaw(appDatabase).toChunk() }
                                 .flatten()
                                 .forEach loop@{ chapterByChunk ->
                                     if (cancelSync) {
@@ -939,7 +956,6 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                             val byteArray = stream.toByteArray()
                             //byteArray按3000长度切割
                             val chunks = byteArray.toList().chunked(5000)
-
                             chunks.forEachIndexed { index, chunk ->
                                 var temp = chunk.joinToString(",")
                                 if (index == chunks.size - 1) {

@@ -1,17 +1,12 @@
 package com.example.bandReader.data
 
-import android.net.Uri
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.ColumnInfo
-import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
-import java.net.URI
-import java.util.Base64
 
 @Entity(tableName = "chapter")
 @Serializable
@@ -33,6 +28,22 @@ data class Chapter(
     @ColumnInfo(name = "list")
     var list: String = "",
 )
+
+data class ChapterWithoutContent(
+    @ColumnInfo(name = "id") var id: Int = 0,
+    @ColumnInfo(name = "index") var index: Int,
+    @ColumnInfo(name = "bookId") var bookId: Int,
+    @ColumnInfo(name = "name") var name: String,
+    @ColumnInfo(name = "paging") var paging: Int,
+    @ColumnInfo(name = "sync") var sync: Boolean = false,
+    @ColumnInfo(name = "list") var list: String = "",
+)
+
+suspend fun ChapterWithoutContent.getRaw(appDatabase: AppDatabase):Chapter{
+    return appDatabase.chapterDao().getOneById(this.id)
+}
+
+
 
 @Serializable
 data class ChapterByChunk(

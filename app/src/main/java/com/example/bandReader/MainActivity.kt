@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -48,11 +49,11 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FabPosition
 import androidx.compose.material3.Icon
@@ -70,6 +71,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -82,6 +84,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -103,6 +107,7 @@ import com.airbnb.lottie.compose.rememberLottieComposition
 import com.example.bandReader.data.Book
 import com.example.bandReader.data.Chapter
 import com.example.bandReader.data.SyncStatus
+import com.example.bandReader.data.SyncType
 import com.example.bandReader.ui.composable.Title
 import com.example.bandReader.ui.theme.BandReaderTheme
 import com.example.bandReader.ui.theme.BgColor
@@ -113,6 +118,7 @@ import com.example.bandReader.ui.theme.BtnGrayColor
 import com.example.bandReader.ui.theme.ItemColor
 import com.example.bandReader.ui.theme.FillBtnColor
 import com.example.bandReader.util.FileUtils
+import com.example.bandReader.util.regexList
 import com.permissionx.guolindev.PermissionX
 import com.xiaomi.xms.wearable.Wearable
 import com.xiaomi.xms.wearable.message.MessageApi
@@ -731,15 +737,96 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    @OptIn(FlowPreview::class)
+    @SuppressLint("StateFlowValueCalledInComposition")
+    @OptIn(FlowPreview::class, ExperimentalMaterial3Api::class)
     @Composable
     fun DetailScreen(
     ) {
-        val chaptersState = mainViewModel.chapters.collectAsState(initial = emptyList())
+        val chaptersState = mainViewModel.chapterListFlow.collectAsState(initial = emptyList())
         val syncState = mainViewModel.syncStatus.collectAsState(initial = SyncStatus.SyncDef)
         val currentBookState = mainViewModel.currentBookFlow.collectAsState()
         val chapterLoadingState = mainViewModel.chapterLoading.collectAsState()
+        var rangeDialogState by remember { mutableStateOf(false) }
+        //pair<int,int>
+        var rangeStartState by remember { mutableStateOf("1") }
+        var rangeEndState by remember { mutableStateOf("1") }
         val coroutineScope = rememberCoroutineScope()
+
+        if (rangeDialogState) {
+            AlertDialogExample(
+                dialogTitle = "选择范围",
+                dialogText = "当前范围第100-200章",
+                onConfirmation = {
+                    if (rangeStartState.toInt() > rangeEndState.toInt()){
+                        Toast.makeText(this@MainActivity, "起始章节不得大于结束章节", Toast.LENGTH_SHORT).show()
+                    }else{
+                        coroutineScope.launch(Dispatchers.IO) {
+                            mainViewModel.syncv2(currentBookState.value!!.id, SyncType.Range(rangeStartState.toInt(), rangeEndState.toInt()))
+                        }
+                        rangeDialogState = false
+                    }
+                },
+                onDismissRequest = {
+                    rangeDialogState = false
+                },
+            ) {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedTextField(
+                            label = { Text(text = "开始章节") },
+                            supportingText = {
+                                if (regexList.getValue("isInt").matches(rangeStartState)) {
+                                    Text(
+                                        text = mainViewModel.chapterListFlow.value.find { it.index == rangeStartState.toInt() - 1 }?.name
+                                            ?: ""
+                                    )
+                                }
+                            },
+                            value = rangeStartState.toString(),
+                            //仅数字
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done
+                            ),
+                            textStyle = TextStyle.Default.copy(color = Color.White),
+                            onValueChange = { rangeStartState = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(0.dp, 4.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedTextField(
+                            label = { Text(text = "结束章节") },
+                            supportingText = {
+                                if (regexList.getValue("isInt").matches(rangeEndState)) {
+                                    Text(
+                                        text = mainViewModel.chapterListFlow.value.find { it.index == rangeEndState.toInt() - 1 }?.name
+                                            ?: ""
+                                    )
+                                }
+                            },
+                            value = rangeEndState.toString(),
+                            //仅数字
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done
+                            ),
+                            textStyle = TextStyle.Default.copy(color = Color.White),
+                            onValueChange = { rangeEndState = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(0.dp, 4.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                }
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -766,9 +853,11 @@ class MainActivity : AppCompatActivity() {
             Row(verticalAlignment = Alignment.Top) {
                 Title(
                     currentBookState.value!!.name,
-                    subStr = "${syncCount.first}/${syncCount.second}",
+                    subStr = "${syncCount.first}/${syncCount.second} 点击限定",
                     modifier = Modifier.weight(1f),
-                    subOffset = 8.dp,
+                    click = {
+                        rangeDialogState = true
+                    }
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 // button with icon
@@ -797,7 +886,14 @@ class MainActivity : AppCompatActivity() {
                     },
                 )
             }
-            Spacer(modifier = Modifier.padding(12.dp))
+
+            Text(
+                text = "当前范围第100-200章", modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(top = 8.dp)
+            )
+
+            Spacer(modifier = Modifier.padding(8.dp))
 
             val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.lottie_load))
             //scroll state
@@ -815,29 +911,31 @@ class MainActivity : AppCompatActivity() {
             SideEffect {
                 if (!toTop) {
                     coroutineScope.launch {
-                        delay(200)
                         /*mainViewModel.receiveFlow.value =
                             "sideEffect time ${System.currentTimeMillis()}"*/
 
-                        if (syncCount.first == syncCount.second) {
-                            coroutineScope.launch {
-                                listState.scrollToItem(syncCount.second + 1)
+                        mainViewModel.chapterListFlow.collectLatest {
+                            delay(200)
+                            if (syncCount.first == syncCount.second) {
+                                coroutineScope.launch {
+                                    listState.scrollToItem(syncCount.second + 1)
+                                }
+                            } else {
+                                coroutineScope.launch {
+                                    val index = if (syncCount.first > 5) syncCount.first - 2 else 0
+                                    listState.scrollToItem(index)
+                                }
                             }
-                        } else {
-                            coroutineScope.launch {
-                                val index = if (syncCount.first > 5) syncCount.first - 2 else 0
-                                listState.scrollToItem(index)
-                            }
-                        }
 
-                        if (!isCollecting) {
-                            coroutineScope.launch {
-                                mainViewModel.receiveFlow.value = "coroutineScope launch"
-                                isCollecting = true
-                                mainViewModel.syncFlow.collectLatest {
-                                    val latest = it.first
-                                    if (latest < it.second) listState.scrollToItem(if (latest > 2) latest - 2 else latest)
-                                    else listState.scrollToItem(latest + 2)
+                            if (!isCollecting) {
+                                coroutineScope.launch {
+                                    mainViewModel.receiveFlow.value = "coroutineScope launch"
+                                    isCollecting = true
+                                    mainViewModel.syncFlow.collectLatest {
+                                        val latest = it.first
+                                        if (latest < it.second) listState.scrollToItem(if (latest > 2) latest - 2 else latest)
+                                        else listState.scrollToItem(latest + 2)
+                                    }
                                 }
                             }
                         }
@@ -1060,7 +1158,7 @@ class MainActivity : AppCompatActivity() {
             inputStream = context.contentResolver.openInputStream(uri)
             val bufferedReader = BufferedReader(InputStreamReader(inputStream, encode))
             var chapters = mutableListOf(Pair("", ""))
-            val regex = Regex(""".{0,10}第.{1,10}章.{0,30}""")
+            val regex = Regex("""(.{0,20})第(.{1,10})(章|卷)(.{0,30})""")
             mainViewModel.receiveFlow.value = "开始读取"
             var counter = 0
             var counter2 = 0
@@ -1119,26 +1217,30 @@ class MainActivity : AppCompatActivity() {
             var chunkCounter = 1
             var rawTitle = ""
             lines.forEachIndexed { index, s ->
-                if (index == 0 && regex.matches(s)) {
-                    temp = temp.copy(first = s.replace("=", ""))
+                var line = s
+                if (regex.matches(line)) {
+                    line = line.replace(" ", "").replace("=", "")
+                }
+                if (index == 0 && regex.matches(line)) {
+                    temp = temp.copy(first = line)
                 }
                 if (regex.matches(s)) {
-                    rawTitle = s.replace("=", "")
+                    rawTitle = line
                     chunkCounter = 1
                     if (chapters.size > 0) {
                         chapters.add(temp)
-                        temp = temp.copy(first = s.replace("=", ""), second = "")
+                        temp = temp.copy(first = line, second = "")
                     }
                 } else {
-                    temp = temp.copy(second = temp.second + s + "\n")
+                    temp = temp.copy(second = temp.second + line + "\n")
 
                     if (temp.second.length > 5000) {
                         chapters.add(temp)
                         temp = temp.copy(second = "")
                         if (temp.first == "开始") {
                             temp = temp.copy(first = "第1部分")
-                        }
-                        else temp = temp.copy(first = rawTitle + " 第${++chunkCounter}部分")
+                        } else temp =
+                            temp.copy(first = if (rawTitle.isNotBlank()) rawTitle + "_第${++chunkCounter}部分" else "第${++chunkCounter}部分")
                     }
                 }
             }
@@ -1186,7 +1288,8 @@ fun AlertDialogExample(
     wait: Boolean = false,
     dialogSubText: String? = null,
     confirmText: String = "确认",
-    cancelText: String = "取消"
+    cancelText: String = "取消",
+    content: (@Composable () -> Unit)? = null,
 ) {
     val bookNameState = remember { mutableStateOf(dialogText) }
     val coverState = coverBitmapFlow.collectAsState()
@@ -1195,7 +1298,7 @@ fun AlertDialogExample(
     val context = LocalContext.current
     AlertDialog(title = {
         Text(text = dialogTitle)
-    }, text = {
+    }, text = content ?: {
         Column(
             modifier = Modifier
                 .offset(y = (-10).dp)
