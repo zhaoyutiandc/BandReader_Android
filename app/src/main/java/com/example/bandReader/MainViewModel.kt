@@ -37,10 +37,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
@@ -104,6 +102,9 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     val messageFlow = MutableStateFlow("")
     var syncingList = false
     var chapterListFlow = MutableStateFlow<List<ChapterWithoutContent>>(emptyList())
+    var rangeChapterListFlow = MutableStateFlow<List<ChapterWithoutContent>>(emptyList())
+    var currentSendChapterFlow = MutableStateFlow<Chapter?>(null)
+    var currentSyncType:SyncType = SyncType.UnSync
 
     suspend fun getChapters(bookId: Int) {
         syncFlow.value = Pair(
@@ -505,9 +506,16 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                     )
 
                     //如果是最后一章 就不再同步下一章
-                    if (savedIndex == chapterListFlow.value.last().index) {
-                        syncStatus.value = SyncStatus.SyncRe
+                    val lastChapter = if (currentSyncType is SyncType.UnSync) {
+                        chapterListFlow.value.last()
+                    } else {
+                        rangeChapterListFlow.value.last()
+                    }
+                    if (savedIndex == lastChapter.index) {
+                        if (currentSyncType is SyncType.UnSync) syncStatus.value = SyncStatus.SyncRe
+                        else syncStatus.value = SyncStatus.SyncDef
                         isSyncing.value = false
+                        cancelSync = true
                         return@launch
                     }
                     if (!cancelSync) {
@@ -688,6 +696,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         val chapterWithoutContent =
             chapterListFlow.value.find { it.index == index }
         val curChapter = appDatabase.chapterDao().getOneById(chapterWithoutContent!!.id)
+        currentSendChapterFlow.value = curChapter
         if (curChapter == null) {
             receiveFlow.value = "找不到curChapter $index"
             return
@@ -718,6 +727,14 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
     }
 
     suspend fun syncv2(bookId: Int, syncType: SyncType = SyncType.UnSync) {
+        currentSyncType = syncType
+        cancelSync = false
+        if (!launchBandApp()) {
+            withContext(Dispatchers.IO) {
+                Toast.makeText(appContext, "未连接手环", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         if (syncStatus.value is SyncStatus.Syncing) {
             cancelSync = true
             syncStatus.value = SyncStatus.SyncDef
@@ -731,6 +748,7 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
         syncChapterInfo(bookId)
 
         if (syncType is SyncType.UnSync) {
+            currentSendChapterFlow.value = null
             //chapterListFlow.value中第一个sync是false的
             if (syncStatus.value is SyncStatus.SyncRe) {
                 receiveFlow.value = "firstUnSync is null"
@@ -743,6 +761,11 @@ class MainViewModel @Inject constructor(@ApplicationContext val appContext: Cont
                 syncNextChapter(firstUnSync.index)
             }
         } else if (syncType is SyncType.Range) {
+            //这个range start会>0并且end <=最后一章的index 但是 肯会出现 start = 1 end = 1的情况这种就是只有第一章
+            rangeChapterListFlow.value = appDatabase.chapterDao().getChaptersWithoutContent(bookId)
+                .filter { it.index in syncType.start..syncType.end }
+            receiveFlow.value = "分段同步 " + rangeChapterListFlow.value.map { it.index }.toString()
+            syncNextChapter(rangeChapterListFlow.value.first().index)
             //按范围过滤章节
             /*chapterListFlow.value = appDatabase.chapterDao().getChaptersWithoutContent(bookId)
                 .filter {

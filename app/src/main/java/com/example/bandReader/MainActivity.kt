@@ -106,6 +106,7 @@ import com.airbnb.lottie.compose.LottieConstants
 import com.airbnb.lottie.compose.rememberLottieComposition
 import com.example.bandReader.data.Book
 import com.example.bandReader.data.Chapter
+import com.example.bandReader.data.ChapterWithoutContent
 import com.example.bandReader.data.SyncStatus
 import com.example.bandReader.data.SyncType
 import com.example.bandReader.ui.composable.Title
@@ -183,11 +184,8 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         if (!filePath.value.endsWith(".txt")) {
                             Toast.makeText(
-                                this@MainActivity,
-                                "不支持的文件格式",
-                                Toast.LENGTH_SHORT
-                            )
-                                .show()
+                                this@MainActivity, "不支持的文件格式", Toast.LENGTH_SHORT
+                            ).show()
                         } else {
                             openDialog.value = true
                         }
@@ -291,8 +289,7 @@ class MainActivity : AppCompatActivity() {
                                         300, easing = LinearEasing
                                     )
                                 ) + androidx.compose.animation.slideInHorizontally(animationSpec = tween(
-                                    300,
-                                    easing = EaseIn
+                                    300, easing = EaseIn
                                 ),
                                     //compose 屏幕宽度
                                     initialOffsetX = { fullWidth -> fullWidth }), fadeOut(
@@ -300,10 +297,8 @@ class MainActivity : AppCompatActivity() {
                                         300, easing = LinearEasing
                                     )
                                 ) + androidx.compose.animation.slideOutHorizontally(animationSpec = tween(
-                                    300,
-                                    easing = EaseOut
-                                ),
-                                    targetOffsetX = { fullWidth -> fullWidth })
+                                    300, easing = EaseOut
+                                ), targetOffsetX = { fullWidth -> fullWidth })
                             )
                         )
                     }
@@ -335,9 +330,7 @@ class MainActivity : AppCompatActivity() {
                                         ).show()
                                     } else if (mainViewModel.syncingList) {
                                         Toast.makeText(
-                                            context,
-                                            "同步列表中请稍后",
-                                            Toast.LENGTH_SHORT
+                                            context, "同步列表中请稍后", Toast.LENGTH_SHORT
                                         ).show()
                                     } else {
                                         mainViewModel.currentBookFlow.value = book
@@ -527,8 +520,7 @@ class MainActivity : AppCompatActivity() {
         Scaffold(floatingActionButtonPosition = FabPosition.End, floatingActionButton = {
             if (false) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
+                    verticalAlignment = Alignment.CenterVertically, modifier = Modifier
                         .background(
                             color = Color.DarkGray, shape = RoundedCornerShape(32.dp)
                         )
@@ -634,15 +626,12 @@ class MainActivity : AppCompatActivity() {
                                     waitEdit = true
                                     if (it.isBlank()) {
                                         Toast.makeText(
-                                            this@MainActivity,
-                                            "请输入书名!",
-                                            Toast.LENGTH_SHORT
+                                            this@MainActivity, "请输入书名!", Toast.LENGTH_SHORT
                                         ).show()
                                         waitEdit = false
                                     } else {
                                         mainViewModel.changeBook(
-                                            curBook!!.copy(name = it),
-                                            coverBitmapFlow.value
+                                            curBook!!.copy(name = it), coverBitmapFlow.value
                                         )
                                     }
                                 },
@@ -651,8 +640,7 @@ class MainActivity : AppCompatActivity() {
                                     editDialogFlow.value = false
                                     curBook = null
                                     coverBitmapFlow.value = null
-                                }
-                            )
+                                })
                         }
 
                         bookState.value.forEach { book ->
@@ -694,15 +682,13 @@ class MainActivity : AppCompatActivity() {
                                             .fillMaxWidth()
                                             .padding(12.dp, 14.dp)
                                     ) {
-                                        Text(
-                                            text = "编辑",
+                                        Text(text = "编辑",
                                             color = Blue80,
                                             modifier = Modifier.clickable(true) {
                                                 editDialogFlow.value = true
                                             })
                                         Spacer(modifier = Modifier.padding(8.dp))
-                                        Text(
-                                            text = "删除",
+                                        Text(text = "删除",
                                             color = Blue80,
                                             modifier = Modifier.clickable(true) {
                                                 delDialogState = true
@@ -748,8 +734,10 @@ class MainActivity : AppCompatActivity() {
         val chapterLoadingState = mainViewModel.chapterLoading.collectAsState()
         var rangeDialogState by remember { mutableStateOf(false) }
         //pair<int,int>
-        var rangeStartState by remember { mutableStateOf("1") }
-        var rangeEndState by remember { mutableStateOf("1") }
+        var rangeStartState by remember { mutableStateOf("") }
+        var rangeEndState by remember { mutableStateOf("") }
+        var startChapter by remember { mutableStateOf<ChapterWithoutContent?>(null) }
+        var endChapter by remember { mutableStateOf<ChapterWithoutContent?>(null) }
         val coroutineScope = rememberCoroutineScope()
 
         if (rangeDialogState) {
@@ -757,13 +745,26 @@ class MainActivity : AppCompatActivity() {
                 dialogTitle = "选择范围",
                 dialogText = "当前范围第100-200章",
                 onConfirmation = {
-                    if (rangeStartState.toInt() > rangeEndState.toInt()){
-                        Toast.makeText(this@MainActivity, "起始章节不得大于结束章节", Toast.LENGTH_SHORT).show()
-                    }else{
-                        coroutineScope.launch(Dispatchers.IO) {
-                            mainViewModel.syncv2(currentBookState.value!!.id, SyncType.Range(rangeStartState.toInt(), rangeEndState.toInt()))
+                    if (rangeStartState.isNotEmpty() && rangeEndState.isNotEmpty() && (rangeStartState.toInt() > rangeEndState.toInt())) {
+                        Toast.makeText(
+                            this@MainActivity, "起始章节不得大于结束章节", Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        if (startChapter !== null && endChapter !== null) {
+                            coroutineScope.launch(Dispatchers.IO) {
+                                mainViewModel.currentBookFlow.value?.let {
+                                    mainViewModel.syncv2(
+                                        currentBookState.value!!.id, SyncType.Range(
+                                            rangeStartState.toInt() - 1, rangeEndState.toInt() - 1
+                                        )
+                                    )
+                                }
+                            }
+                            rangeDialogState = false
+                        } else {
+                            Toast.makeText(this@MainActivity, "请确认章节", Toast.LENGTH_SHORT)
+                                .show()
                         }
-                        rangeDialogState = false
                     }
                 },
                 onDismissRequest = {
@@ -786,11 +787,19 @@ class MainActivity : AppCompatActivity() {
                             value = rangeStartState.toString(),
                             //仅数字
                             keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Number,
-                                imeAction = ImeAction.Done
+                                keyboardType = KeyboardType.Number, imeAction = ImeAction.Done
                             ),
                             textStyle = TextStyle.Default.copy(color = Color.White),
-                            onValueChange = { rangeStartState = it },
+                            onValueChange = { number ->
+                                rangeStartState = number
+                                if (number.isEmpty()) {
+                                    startChapter = null
+                                }
+                                if (regexList.getValue("isInt").matches(number)) {
+                                    startChapter =
+                                        mainViewModel.chapterListFlow.value.find { it.index == rangeStartState.toInt() - 1 }
+                                }
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(0.dp, 4.dp)
@@ -812,11 +821,19 @@ class MainActivity : AppCompatActivity() {
                             value = rangeEndState.toString(),
                             //仅数字
                             keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Number,
-                                imeAction = ImeAction.Done
+                                keyboardType = KeyboardType.Number, imeAction = ImeAction.Done
                             ),
                             textStyle = TextStyle.Default.copy(color = Color.White),
-                            onValueChange = { rangeEndState = it },
+                            onValueChange = { number ->
+                                rangeEndState = number
+                                if (number.isEmpty()) {
+                                    startChapter = null
+                                }
+                                if (regexList.getValue("isInt").matches(number)) {
+                                    endChapter =
+                                        mainViewModel.chapterListFlow.value.find { it.index == rangeEndState.toInt() - 1 }
+                                }
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(0.dp, 4.dp)
@@ -851,14 +868,12 @@ class MainActivity : AppCompatActivity() {
             }
             val syncCount by mainViewModel.syncFlow.collectAsState()
             Row(verticalAlignment = Alignment.Top) {
-                Title(
-                    currentBookState.value!!.name,
+                Title(currentBookState.value!!.name,
                     subStr = "${syncCount.first}/${syncCount.second} 点击限定",
                     modifier = Modifier.weight(1f),
                     click = {
                         rangeDialogState = true
-                    }
-                )
+                    })
                 Spacer(modifier = Modifier.width(10.dp))
                 // button with icon
                 ExtendedFloatingActionButton(
@@ -887,11 +902,14 @@ class MainActivity : AppCompatActivity() {
                 )
             }
 
-            Text(
-                text = "当前范围第100-200章", modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(top = 8.dp)
-            )
+            if (startChapter !== null && endChapter !== null && mainViewModel.currentSendChapterFlow.value !== null) {
+                Text(
+                    text = "当前范围第${startChapter!!.index + 1}-${endChapter!!.index + 1}章 已同步至${(mainViewModel.currentSendChapterFlow.value?.index ?: 0) + 1}章",
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .padding(top = 8.dp)
+                )
+            }
 
             Spacer(modifier = Modifier.padding(8.dp))
 
@@ -1050,8 +1068,7 @@ class MainActivity : AppCompatActivity() {
                             textAlign = TextAlign.Center,
                             modifier = Modifier
                                 .background(
-                                    color = BgColor,
-                                    shape = RoundedCornerShape(32.dp)
+                                    color = BgColor, shape = RoundedCornerShape(32.dp)
                                 )
                                 .align(Alignment.TopStart)
                                 .fillMaxWidth()
@@ -1070,14 +1087,11 @@ class MainActivity : AppCompatActivity() {
 
                 if (currentBookState.value!!.chapters > 200) {
                     AnimatedVisibility(
-                        chapterLoadingState.value,
-                        enter = fadeIn(),
-                        exit = fadeOut()
+                        chapterLoadingState.value, enter = fadeIn(), exit = fadeOut()
                     ) {
                         LottieAnimation(
                             composition,
-                            modifier = Modifier
-                                .fillMaxSize(),
+                            modifier = Modifier.fillMaxSize(),
                             iterations = LottieConstants.IterateForever,
                         )
                     }
@@ -1173,11 +1187,10 @@ class MainActivity : AppCompatActivity() {
                     tempStr.clear()
                 } else {
                     // '\x00' continue
-                    if (char == '\u0000') continue
-                    /*if (tempStr.length > 10000) {
-                        lines.add(tempStr.toString())
-                        tempStr.clear()
-                    }*/
+                    if (char == '\u0000') continue/*if (tempStr.length > 10000) {
+                    lines.add(tempStr.toString())
+                    tempStr.clear()
+                }*/
                     tempStr.append(char)
                 }
             }
@@ -1298,10 +1311,10 @@ fun AlertDialogExample(
     val context = LocalContext.current
     AlertDialog(title = {
         Text(text = dialogTitle)
-    }, text = content ?: {
+    }, text = content ?:
+    {
         Column(
-            modifier = Modifier
-                .offset(y = (-10).dp)
+            modifier = Modifier.offset(y = (-10).dp)
         ) {
             dialogSubText?.let {
                 Text(text = dialogSubText)
@@ -1340,8 +1353,7 @@ fun AlertDialogExample(
                                     (context as MainActivity).pickFileLauncher.launch(intent)
                                 }
                             }
-                    }
-                ) {
+                    }) {
                     coverState.value?.let {
                         Image(
                             bitmap = it.asImageBitmap(),
