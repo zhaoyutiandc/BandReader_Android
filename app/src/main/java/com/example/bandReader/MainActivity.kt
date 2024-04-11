@@ -584,7 +584,7 @@ class MainActivity : AppCompatActivity() {
                     val scrollState = rememberScrollState()
                     //list book
 
-                    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.lottie_empty))
+                    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.empty))
                     var delDialogState by remember { mutableStateOf(false) }
                     val editDialogState by editDialogFlow.collectAsState(initial = false)
                     var curBook by remember { mutableStateOf<Book?>(null) }
@@ -733,7 +733,6 @@ class MainActivity : AppCompatActivity() {
         val currentBookState = mainViewModel.currentBookFlow.collectAsState()
         val chapterLoadingState = mainViewModel.chapterLoading.collectAsState()
         var rangeDialogState by remember { mutableStateOf(false) }
-        //pair<int,int>
         var rangeStartState by remember { mutableStateOf("") }
         var rangeEndState by remember { mutableStateOf("") }
         var startChapter by remember { mutableStateOf<ChapterWithoutContent?>(null) }
@@ -1172,7 +1171,8 @@ class MainActivity : AppCompatActivity() {
             inputStream = context.contentResolver.openInputStream(uri)
             val bufferedReader = BufferedReader(InputStreamReader(inputStream, encode))
             var chapters = mutableListOf(Pair("", ""))
-            val regex = Regex("""(.{0,20})第(.{1,10})(章|卷)(.{0,30})""")
+            val split = "章|卷|节|部|篇"
+            val regex = Regex("""(.{0,5})第(.{1,10})($split)(.{0,30})""")
             mainViewModel.receiveFlow.value = "开始读取"
             var counter = 0
             var counter2 = 0
@@ -1232,7 +1232,7 @@ class MainActivity : AppCompatActivity() {
             lines.forEachIndexed { index, s ->
                 var line = s
                 if (regex.matches(line)) {
-                    line = line.replace(" ", "").replace("=", "")
+                    line = line.replace(" ", "_").replace("=", "")
                 }
                 if (index == 0 && regex.matches(line)) {
                     temp = temp.copy(first = line)
@@ -1263,7 +1263,16 @@ class MainActivity : AppCompatActivity() {
 
             mainViewModel.receiveFlow.value = "读取完毕"
             inputStream?.close()
-            chapters = chapters.filter { it.second.length > 0 }.toMutableList()
+            chapters = chapters
+                .filter {
+                    it.first.isNotBlank()
+                }.map {
+                    if (it.second.isBlank()) {
+                        it.copy(second = "无内容")
+                    } else {
+                        it
+                    }
+                }.toMutableList()
             val chapterEntity = chapters.mapIndexed { index, it ->
                 Chapter(
                     index = index,
